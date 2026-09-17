@@ -5,6 +5,8 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cstdio>
+
 #include "AnalyserTap.h"
 #include "ChordName.h"
 #include "KeyMonitor.h"
@@ -324,7 +326,7 @@ public:
         scopePanel->onExtentChanged = [this]
         {
             if (editor != nullptr)
-                fitWindowToEditor();
+                fitWindowToEditor(/*force*/ true);
             else
                 resized();
         };
@@ -362,6 +364,18 @@ public:
         strip.setStatus(juce::String(found.size()) + " plugins indexed", audioSummary());
 
         setSize(920, 640);
+    }
+
+    /** Opens the analyser panel, for command-line and agent use. */
+    void openScope()
+    {
+        if (scopePanel != nullptr && !scopePanel->isOpen())
+        {
+            scopePanel->setOpen(true);
+            strip.setScopeOpen(true);
+            if (editor != nullptr)
+                fitWindowToEditor(true);
+        }
     }
 
     /** Loads a plugin bundle by path, for command-line and agent use. */
@@ -823,9 +837,9 @@ private:
         several are bigger than a laptop screen; clipping them silently, or
         forcing them into a fixed window, loses controls with no indication
         that anything is missing. */
-    void fitWindowToEditor()
+    void fitWindowToEditor(bool force = false)
     {
-        if (editor == nullptr || fitting)
+        if (editor == nullptr || (fitting && !force))
             return;
 
         // Resizing the window makes the editor lay out again, which calls back
@@ -845,7 +859,15 @@ private:
 
         // setContentOwned(c, true) makes the window track the content's size,
         // so resize this component rather than the window.
-        setSize(juce::roundToInt(wantW * fit), juce::roundToInt(editor->getHeight() * fit) + chromeHeight);
+        // Follows the animation rather than the switch: keying this off
+        // isOpen() made the window jump to its final height on the first frame
+        // while the panel was still growing, which reads as content dropping
+        // in from above instead of the panel pushing the window open.
+        const int scopeTaken =
+            scopePanel != nullptr ? juce::roundToInt(scopeHeight * scopePanel->getExtent()) : 0;
+
+        setSize(juce::roundToInt(wantW * fit),
+                juce::roundToInt(editor->getHeight() * fit) + chromeHeight + scopeTaken);
     }
 
     void finishLoading()
@@ -997,12 +1019,22 @@ public:
         // Loading from the command line is here because this host exists to be
         // driven by something other than a person. It is also the only way to
         // put the app into a known state for a screenshot.
-        const auto tokens = juce::StringArray::fromTokens(args, true);
+        // The real argument vector, not the joined string: splitting that on
+        // whitespace breaks every path containing a space, which is most of
+        // them under /Library/Audio/Plug-Ins.
+        juce::ignoreUnused(args);
+        const auto tokens = getCommandLineParameterArray();
         const auto idx = tokens.indexOf("--load");
 
+        auto* main = dynamic_cast<MainComponent*>(window->getContentComponent());
+        if (main == nullptr)
+            return;
+
         if (idx >= 0 && idx + 1 < tokens.size())
-            if (auto* main = dynamic_cast<MainComponent*>(window->getContentComponent()))
-                main->loadFromPath(tokens[idx + 1]);
+            main->loadFromPath(tokens[idx + 1]);
+
+        if (tokens.contains("--scope"))
+            main->openScope();
     }
     void shutdown() override { window.reset(); }
 
@@ -1014,7 +1046,11 @@ private:
         {
             setUsingNativeTitleBar(true);
             setContentOwned(new MainComponent(), true);
-            setResizable(true, false);
+            // Not resizable: the window is sized to the plugin's editor, and an
+            // editor does not scale to fit a window the user dragged. Plugins
+            // that can be resized are resized from inside themselves, and the
+            // host follows.
+            setResizable(false, false);
             centreWithSize(920, 640);
             setVisible(true);
         }

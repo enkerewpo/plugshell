@@ -95,7 +95,9 @@ private:
     static juce::File cacheFile()
     {
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("plugshell/index.json");
+            .getChildFile("plugshell/index-v2.json"); // v2: categories now come from the
+                                                      // plugin itself, so entries written by
+                                                      // the old string scan must not be reused
     }
 
     /** Path, size and timestamp together, so a reinstall invalidates the entry. */

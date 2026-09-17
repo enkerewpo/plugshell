@@ -44,12 +44,7 @@ public:
     void setOpen(bool shouldOpen)
     {
         open = shouldOpen;
-        if (open)
-            startTimerHz(30);
-        else if (!isAnimating())
-            stopTimer();
-
-        startTimerHz(60); // 60 so the traces move smoothly, not just the slide
+        startTimerHz(60); // runs until the slide settles; stops itself after
     }
 
     bool isOpen() const { return open; }
@@ -78,15 +73,15 @@ public:
 private:
     void timerCallback() override
     {
-        // Eased towards the target so the movement decelerates rather than
-        // stopping dead.
         const float target = open ? 1.0f : 0.0f;
         const bool moving = std::abs(target - extent) > 0.002f;
 
         if (moving)
         {
+            // Eased, so the movement decelerates instead of stopping dead.
             extent += (target - extent) * 0.30f;
-            repaint();
+            if (onExtentChanged)
+                onExtentChanged();
         }
         else if (extent != target)
         {
@@ -96,17 +91,11 @@ private:
         }
         else if (!open)
         {
-            stopTimer();
+            stopTimer(); // closed and settled: nothing left to draw
             return;
         }
 
-        // Only tells the window to relayout while the panel is actually
-        // moving. Doing it every frame made the host lay out the plugin editor
-        // thirty times a second, which is what made this feel slow.
-        if (moving && onExtentChanged)
-            onExtentChanged();
-
-        if (open)
+        if (open || moving)
         {
             refresh();
             repaint();
