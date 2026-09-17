@@ -6,6 +6,8 @@
 #include <juce_dsp/juce_dsp.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <deque>
+
 #include "AnalyserTap.h"
 
 namespace plugshell
@@ -36,6 +38,8 @@ public:
           window(fftSize, juce::dsp::WindowingFunction<float>::hann)
     {
         scope.resize(scopeFrames);
+        stereoL.resize(scopeFrames);
+        stereoR.resize(scopeFrames);
         fftData.resize((size_t) fftSize * 2);
         magnitudes.resize((size_t) fftSize / 2, -100.0f);
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
@@ -64,6 +68,15 @@ public:
         by whatever it takes and a tall panel pushes the strip off the bottom
         of the display on a laptop. Detail is a separate, larger view rather
         than a taller inline one. */
+    void setColours(juce::Colour bg, juce::Colour ink, juce::Colour mute, juce::Colour hair)
+    {
+        colBase = bg;
+        colInk = ink;
+        colMute = mute;
+        colHair = hair;
+        repaint();
+    }
+
     void setDetailed(bool d)
     {
         detailed = d;
@@ -86,22 +99,47 @@ public:
 
         auto r = getLocalBounds().reduced(detailed ? 22 : 16, detailed ? 18 : 9);
 
-        if (detailed && getHeight() > 420)
+        // Two by two when four across would make each panel a tall sliver,
+        // one row when it would not. Decided by proportion rather than by an
+        // absolute height, which got it wrong the moment the window was a
+        // different size: the panel that prompted this was 420 tall against a
+        // threshold of "taller than 420".
+        //
+        // The stereo display is what makes it matter. It is a shape, and a
+        // shape needs both dimensions; the traces survive a letterbox and it
+        // does not.
+        const bool grid = detailed && r.getWidth() < r.getHeight() * 4;
+        const int gap = detailed ? 20 : 12;
+
+        juce::Rectangle<int> cells[4];
+
+        if (grid)
         {
-            // Stacked when there is real room: a spectrum is worth more width
-            // than height, and the waveform reads better wide as well.
-            auto top = r.removeFromTop(r.getHeight() / 2 - 10);
-            r.removeFromTop(20);
-            drawScope(g, top);
-            drawSpectrum(g, r);
-            return;
+            auto top = r.removeFromTop(r.getHeight() / 2 - gap / 2);
+            r.removeFromTop(gap);
+
+            cells[0] = top.removeFromLeft(top.getWidth() / 2 - gap / 2);
+            top.removeFromLeft(gap);
+            cells[1] = top;
+
+            cells[2] = r.removeFromLeft(r.getWidth() / 2 - gap / 2);
+            r.removeFromLeft(gap);
+            cells[3] = r;
+        }
+        else
+        {
+            const int each = (r.getWidth() - gap * 3) / 4;
+            for (auto& cell : cells)
+            {
+                cell = r.removeFromLeft(each);
+                r.removeFromLeft(gap);
+            }
         }
 
-        auto left = r.removeFromLeft(r.getWidth() / 2 - 8);
-        r.removeFromLeft(16);
-
-        drawScope(g, left);
-        drawSpectrum(g, r);
+        drawScope(g, cells[0]);
+        drawSpectrum(g, cells[1]);
+        drawSpectrogram(g, cells[2]);
+        drawStereo(g, cells[3]);
     }
 
 private:
@@ -139,6 +177,7 @@ private:
     void refresh()
     {
         tap.readLatest(scope.data(), scopeFrames);
+        tap.readLatestStereo(stereoL.data(), stereoR.data(), scopeFrames);
 
         std::fill(fftData.begin(), fftData.end(), 0.0f);
         tap.readLatest(fftData.data(), fftSize);
@@ -152,6 +191,35 @@ private:
             const float db = juce::Decibels::gainToDecibels(fftData[i] / (float) (fftSize / 4), -100.0f);
             magnitudes[i] = db > magnitudes[i] ? db : magnitudes[i] * 0.88f + db * 0.12f;
         }
+
+        pushSpectrogramColumn();
+    }
+
+    /** History for the waterfall, newest last.
+
+        Kept as decibel columns rather than as pixels so the display can be
+        resized, or moved between the strip and the full view, without losing
+        what has already gone past. */
+    void pushSpectrogramColumn()
+    {
+        static constexpr int rows = 128;
+
+        std::vector<float> column((size_t) rows);
+
+        for (int y = 0; y < rows; ++y)
+        {
+            // Log frequency, so the octaves are evenly spaced and the bottom
+            // four of them are not squeezed into three pixels.
+            const double f = 20.0 * std::pow(1000.0, (double) y / (double) (rows - 1));
+            const int bin = juce::jlimit(0, (int) magnitudes.size() - 1,
+                                         (int) (f * fftSize / juce::jmax(1.0, tap.getSampleRate())));
+            column[(size_t) y] = magnitudes[(size_t) bin];
+        }
+
+        history.push_back(std::move(column));
+
+        while ((int) history.size() > historyLength)
+            history.pop_front();
     }
 
     void drawScope(juce::Graphics& g, juce::Rectangle<int> area)
@@ -304,6 +372,147 @@ private:
         g.strokePath(p, juce::PathStrokeType(1.2f));
     }
 
+    /** Frequency against time, loudness as brightness.
+
+        The spectrum says what is sounding now; this says what has been. That
+        is the difference that matters for anything with movement in it -- an
+        envelope closing a filter, an LFO, a delay repeating -- because none of
+        those exist in a single frame. */
+    void drawSpectrogram(juce::Graphics& g, juce::Rectangle<int> area)
+    {
+        label(g, area, "SPECTROGRAM");
+        auto plot = area.withTrimmedTop(18);
+
+        g.setColour(colHair);
+        g.drawRect(plot, 1);
+
+        if (history.empty() || plot.getWidth() < 4 || plot.getHeight() < 4)
+            return;
+
+        const int columns = (int) history.size();
+        const int rows = (int) history.front().size();
+
+        juce::Graphics::ScopedSaveState clip(g);
+        g.reduceClipRegion(plot);
+
+        // One rectangle per cell would be tens of thousands of fills a frame.
+        // The image is built once per paint and scaled up, which is also what
+        // gives the display its smooth vertical gradient for free.
+        juce::Image image(juce::Image::RGB, columns, rows, false);
+
+        {
+            juce::Image::BitmapData pixels(image, juce::Image::BitmapData::writeOnly);
+
+            for (int x = 0; x < columns; ++x)
+            {
+                const auto& column = history[(size_t) x];
+
+                for (int y = 0; y < rows; ++y)
+                {
+                    // Bottom of the panel is the lowest frequency.
+                    const float db = column[(size_t) (rows - 1 - y)];
+                    const float lit = juce::jlimit(0.0f, 1.0f, (db + 80.0f) / 80.0f);
+
+                    pixels.setPixelColour(x, y, colBase.interpolatedWith(colInk, lit * lit));
+                }
+            }
+        }
+
+        g.drawImage(image, plot.toFloat(), juce::RectanglePlacement::stretchToFit);
+
+        g.setColour(colHair);
+        g.drawRect(plot, 1);
+    }
+
+    /** Where the sound sits between the speakers, as a polar sample display.
+
+        Each sample pair becomes one point: its angle is where it is panned,
+        its distance from the origin is how loud it is. Centred material stands
+        straight up, a hard-panned sound lies along one edge, and a wide mix
+        fans out to fill the arc.
+
+        The other common drawing of the same data is the goniometer, which
+        plots mid against side directly and fills a diamond. Both are correct;
+        this one reads more directly because the axis you care about -- where
+        the sound is -- is the one your eye follows around the curve.
+
+        The number underneath is the correlation: one is mono, zero is
+        uncorrelated, and below zero is the state that partly disappears when
+        somebody plays it on a phone. */
+    void drawStereo(juce::Graphics& g, juce::Rectangle<int> area)
+    {
+        label(g, area, "STEREO");
+        auto plot = area.withTrimmedTop(18);
+
+        // The frame is the whole plot, the same as the other three. Taking a
+        // strip off the bottom for the number left this one panel shorter
+        // than the one beside it, and four boxes that nearly line up look
+        // worse than four that plainly do not.
+        g.setColour(colHair);
+        g.drawRect(plot, 1);
+
+        auto field = plot.reduced(1).withTrimmedBottom(15);
+
+        // Origin at the bottom centre, so the arc opens upwards into the panel
+        // rather than being a full circle half of which is always empty.
+        const auto origin = juce::Point<float>((float) field.getCentreX(), (float) field.getBottom() - 4.0f);
+        const float radius = juce::jmin((float) field.getWidth() * 0.47f, (float) field.getHeight() - 8.0f);
+
+        g.setColour(colHair.withAlpha(0.8f));
+        {
+            juce::Path arc;
+            arc.addCentredArc(origin.x, origin.y, radius, radius, 0.0f, -juce::MathConstants<float>::halfPi,
+                              juce::MathConstants<float>::halfPi, true);
+            g.strokePath(arc, juce::PathStrokeType(1.0f));
+        }
+
+        // L, centre and R, which is where the eye looks first.
+        for (const float a : {-juce::MathConstants<float>::halfPi, 0.0f, juce::MathConstants<float>::halfPi})
+        {
+            g.setColour(colHair.withAlpha(a == 0.0f ? 0.9f : 0.6f));
+            g.drawLine(origin.x, origin.y, origin.x + std::sin(a) * radius, origin.y - std::cos(a) * radius,
+                       1.0f);
+        }
+
+        double sumLR = 0.0, sumLL = 0.0, sumRR = 0.0;
+        juce::Path dots;
+
+        for (int i = 0; i < scopeFrames; i += 2)
+        {
+            const float l = stereoL[(size_t) i], r = stereoR[(size_t) i];
+
+            sumLR += (double) l * r;
+            sumLL += (double) l * l;
+            sumRR += (double) r * r;
+
+            const float magnitude = std::sqrt(l * l + r * r);
+            if (magnitude < 1.0e-4f)
+                continue;
+
+            // atan2 gives a quarter turn between hard left and hard right;
+            // doubling it opens that quarter out across the half circle, which
+            // is what makes the display worth the space it takes.
+            const float pan = (std::atan2(r, l) - juce::MathConstants<float>::pi * 0.25f) * 2.0f;
+            const float reach = juce::jlimit(0.0f, 1.0f, magnitude) * radius;
+
+            const float x = origin.x + std::sin(pan) * reach;
+            const float y = origin.y - std::cos(pan) * reach;
+
+            dots.addEllipse(x - 0.7f, y - 0.7f, 1.4f, 1.4f);
+        }
+
+        g.setColour(colInk.withAlpha(0.5f));
+        g.fillPath(dots);
+
+        const double denominator = std::sqrt(sumLL * sumRR);
+        const double correlation = denominator > 1.0e-12 ? sumLR / denominator : 1.0;
+
+        g.setColour(correlation < 0.0 ? juce::Colour{0xffd9a441} : colMute);
+        g.setFont(juce::Font(juce::FontOptions(10.5f)));
+        g.drawText("correlation " + juce::String(correlation, 2),
+                   plot.reduced(4).removeFromBottom(13), juce::Justification::centred);
+    }
+
     void label(juce::Graphics& g, juce::Rectangle<int> area, const char* text)
     {
         g.setColour(colMute);
@@ -328,6 +537,11 @@ private:
 
     const AnalyserTap& tap;
     bool detailed = false;
+    static constexpr int historyLength = 220;
+
+    std::vector<float> stereoL, stereoR;
+    std::deque<std::vector<float>> history;
+
     juce::Colour colBase, colInk, colMute, colHair;
     juce::dsp::FFT fft;
     juce::dsp::WindowingFunction<float> window;

@@ -14,11 +14,12 @@ juce_add_gui_app(plugshell_app
 target_sources(plugshell_app PRIVATE Main.cpp)
 
 if(APPLE)
-    target_sources(plugshell_app PRIVATE KeyMonitorMac.mm EditorProbeMac.mm)
+    target_sources(plugshell_app PRIVATE KeyMonitorMac.mm EditorProbeMac.mm SystemTheme.mm)
     target_link_libraries(plugshell_app PRIVATE "-framework Cocoa" "-framework CoreGraphics" "-framework ScreenCaptureKit")
 endif()
 
 target_compile_definitions(plugshell_app PRIVATE
+    PLUGSHELL_VERSION="${PROJECT_VERSION}"
     JUCE_PLUGINHOST_VST3=1
     JUCE_PLUGINHOST_AU=0
     JUCE_WEB_BROWSER=0

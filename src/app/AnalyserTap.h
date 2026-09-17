@@ -32,7 +32,8 @@ public:
 
     explicit AnalyserTap(juce::AudioIODeviceCallback& next) : inner(next)
     {
-        buffer.resize((size_t) capacity, 0.0f);
+        left.resize((size_t) capacity, 0.0f);
+        right.resize((size_t) capacity, 0.0f);
     }
 
     void audioDeviceIOCallbackWithContext(const float* const* input, int numInput, float* const* output,
@@ -46,14 +47,17 @@ public:
 
         int w = writePos.load(std::memory_order_relaxed);
 
+        // Channels kept apart rather than summed. The waveform and the
+        // spectrum want the sum, but where a sound sits between the speakers
+        // is only visible in the difference between the two, and that cannot
+        // be recovered once they have been added together.
+        const float* l = output[0];
+        const float* r = numOutput > 1 ? output[1] : output[0];
+
         for (int i = 0; i < numSamples; ++i)
         {
-            // Mono sum: the scope shows what is there, not where it is.
-            float sum = 0.0f;
-            for (int ch = 0; ch < numOutput; ++ch)
-                sum += output[ch][i];
-
-            buffer[(size_t) w] = sum / (float) numOutput;
+            left[(size_t) w] = l[i];
+            right[(size_t) w] = r[i];
             w = (w + 1) & (capacity - 1);
         }
 
@@ -63,13 +67,14 @@ public:
     void audioDeviceAboutToStart(juce::AudioIODevice* d) override
     {
         sampleRate = d != nullptr ? d->getCurrentSampleRate() : 48000.0;
-        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        std::fill(left.begin(), left.end(), 0.0f);
+        std::fill(right.begin(), right.end(), 0.0f);
         inner.audioDeviceAboutToStart(d);
     }
 
     void audioDeviceStopped() override { inner.audioDeviceStopped(); }
 
-    /** Copies the most recent @p count frames, oldest first. */
+    /** The most recent @p count frames summed to mono, oldest first. */
     void readLatest(float* dest, int count) const
     {
         const int w = writePos.load(std::memory_order_acquire);
@@ -77,7 +82,22 @@ public:
 
         for (int i = 0; i < count; ++i)
         {
-            dest[i] = buffer[(size_t) r];
+            dest[i] = 0.5f * (left[(size_t) r] + right[(size_t) r]);
+            r = (r + 1) & (capacity - 1);
+        }
+    }
+
+    /** The same window, both channels, for anything that needs the difference
+        between them. */
+    void readLatestStereo(float* destL, float* destR, int count) const
+    {
+        const int w = writePos.load(std::memory_order_acquire);
+        int r = (w - count) & (capacity - 1);
+
+        for (int i = 0; i < count; ++i)
+        {
+            destL[i] = left[(size_t) r];
+            destR[i] = right[(size_t) r];
             r = (r + 1) & (capacity - 1);
         }
     }
@@ -86,7 +106,7 @@ public:
 
 private:
     juce::AudioIODeviceCallback& inner;
-    std::vector<float> buffer;
+    std::vector<float> left, right;
     std::atomic<int> writePos{0};
     double sampleRate = 48000.0;
 };

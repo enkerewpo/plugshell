@@ -29,12 +29,95 @@ namespace plugshell
     a light host frames every one of them in glare. */
 namespace theme
 {
-const juce::Colour base{0xff161616};
-const juce::Colour raised{0xff1e1e1e};
-const juce::Colour hair{0xff2e2e2e};
-const juce::Colour ink{0xffe4e4e4};
-const juce::Colour mute{0xff7a7a7a};
-const juce::Colour accent{0xffe4e4e4};
+/** The palette, which is a variable rather than a constant because the
+    application has two of them.
+
+    Named for what a colour is for rather than for what it looks like, so the
+    same names work in both: `base` is whatever the page sits on and `ink` is
+    whatever is written on it, dark on light or light on dark. Nothing outside
+    this block should know which way round it currently is. */
+inline juce::Colour base{0xff161616};
+inline juce::Colour raised{0xff1e1e1e};
+inline juce::Colour hair{0xff2e2e2e};
+inline juce::Colour ink{0xffe4e4e4};
+inline juce::Colour mute{0xff7a7a7a};
+inline juce::Colour accent{0xffe4e4e4};
+
+enum class Mode
+{
+    dark,
+    light,
+    automatic ///< follows macOS
+};
+
+inline Mode mode = Mode::dark;
+
+/** Whether macOS is currently in dark mode. */
+bool systemPrefersDark();
+
+inline bool isDark()
+{
+    return mode == Mode::automatic ? systemPrefersDark() : mode == Mode::dark;
+}
+
+struct Palette
+{
+    juce::Colour base, raised, hair, ink, mute;
+};
+
+inline Palette paletteFor(bool dark)
+{
+    if (dark)
+        return {juce::Colour{0xff161616}, juce::Colour{0xff1e1e1e}, juce::Colour{0xff2e2e2e},
+                juce::Colour{0xffe4e4e4}, juce::Colour{0xff7a7a7a}};
+
+    // Not an inversion. Pure white glares under a plugin editor and the
+    // hairlines vanish into it, so the page is a shade off white and the rules
+    // sit darker against it than their dark-mode counterparts sit light.
+    return {juce::Colour{0xfff4f4f3}, juce::Colour{0xffe9e9e7}, juce::Colour{0xffcfcfcb},
+            juce::Colour{0xff1c1c1b}, juce::Colour{0xff77776f}};
+}
+
+inline void useMix(const Palette& from, const Palette& to, float t)
+{
+    base = from.base.interpolatedWith(to.base, t);
+    raised = from.raised.interpolatedWith(to.raised, t);
+    hair = from.hair.interpolatedWith(to.hair, t);
+    ink = from.ink.interpolatedWith(to.ink, t);
+    mute = from.mute.interpolatedWith(to.mute, t);
+    accent = ink;
+}
+
+inline void apply()
+{
+    const auto p = paletteFor(isDark());
+    useMix(p, p, 0.0f);
+}
+
+inline void applyOld()
+{
+    if (isDark())
+    {
+        base = juce::Colour{0xff161616};
+        raised = juce::Colour{0xff1e1e1e};
+        hair = juce::Colour{0xff2e2e2e};
+        ink = juce::Colour{0xffe4e4e4};
+        mute = juce::Colour{0xff7a7a7a};
+    }
+    else
+    {
+        // Not an inversion. Pure white glares under a plugin editor and the
+        // hairlines disappear, so the page is a shade off and the rules are
+        // darker relative to it than their dark-mode counterparts are light.
+        base = juce::Colour{0xfff4f4f3};
+        raised = juce::Colour{0xffe9e9e7};
+        hair = juce::Colour{0xffcfcfcb};
+        ink = juce::Colour{0xff1c1c1b};
+        mute = juce::Colour{0xff77776f};
+    }
+
+    accent = ink;
+}
 
 /** One type scale for the whole application.
 
@@ -43,10 +126,13 @@ const juce::Colour accent{0xffe4e4e4};
     consistent with the list and the strip. */
 namespace size
 {
-constexpr float title = 15.0f; ///< window and panel headings
-constexpr float body = 13.0f;  ///< list rows, primary labels
-constexpr float label = 11.5f; ///< secondary text, values
-constexpr float micro = 10.5f; ///< column headers, hints
+// Raised across the board. The old scale was chosen to keep the chrome out of
+// the way of the plugin, and went far enough that it was hard to read -- which
+// is the opposite of out of the way.
+constexpr float title = 16.5f; ///< window and panel headings
+constexpr float body = 14.0f;  ///< list rows, primary labels
+constexpr float label = 12.5f; ///< secondary text, values
+constexpr float micro = 11.5f; ///< column headers, hints
 } // namespace size
 
 inline juce::Font ui(float h)
@@ -198,6 +284,7 @@ public:
         }
 
         keys.setFramed(true);
+        back.setGlyph(StripButton::Glyph::back);
         back.onClick = [this]
         {
             if (onBack)
@@ -247,6 +334,14 @@ public:
         plugin with a narrow editor. Wrapping to a second row keeps every
         control present at every width, which is what a control strip is for. */
     static int heightFor(int width) { return width < 620 ? rowHeight * 2 - 8 : rowHeight; }
+
+    void refreshColours()
+    {
+        for (auto* b : {&back, &keys, &scope, &help, &settings})
+            b->setColours(theme::ink, theme::mute, theme::hair);
+
+        repaint();
+    }
 
     void showBack(bool b) { back.setVisible(b); }
 
@@ -379,7 +474,11 @@ private:
 class DarkLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    DarkLookAndFeel()
+    DarkLookAndFeel() { refresh(); }
+
+    /** The palette is copied into the look and feel, so switching themes has
+        to put it back. */
+    void refresh()
     {
         setColour(juce::ResizableWindow::backgroundColourId, theme::base);
         setColour(juce::Label::textColourId, theme::ink);
@@ -419,6 +518,50 @@ public:
     juce::Font getTextButtonFont(juce::TextButton&, int) override { return theme::ui(13.0f); }
 };
 
+/** What the About panel holds. Links have to be real controls rather than
+    painted text, or they are decoration that looks like a link. */
+class AboutContent : public juce::Component
+{
+public:
+    static constexpr int preferredHeight = 176;
+
+    AboutContent()
+    {
+        blurb.setText("A macOS host for audio plugins, built so that a program can work one: "
+                      "read its parameters, see its editor, and operate the controls that are not "
+                      "parameters.",
+                      juce::dontSendNotification);
+        blurb.setJustificationType(juce::Justification::topLeft);
+        blurb.setColour(juce::Label::textColourId, theme::mute);
+        blurb.setFont(theme::ui(theme::size::label));
+        addAndMakeVisible(blurb);
+
+        for (auto* link : {&site, &repo})
+        {
+            link->setColour(juce::HyperlinkButton::textColourId, theme::ink);
+            link->setJustificationType(juce::Justification::centredLeft);
+            link->setFont(theme::ui(theme::size::body), false, juce::Justification::centredLeft);
+            addAndMakeVisible(link);
+        }
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        blurb.setBounds(r.removeFromTop(66));
+        r.removeFromTop(14);
+        site.setBounds(r.removeFromTop(26));
+        r.removeFromTop(6);
+        repo.setBounds(r.removeFromTop(26));
+    }
+
+private:
+    juce::Label blurb;
+    juce::HyperlinkButton site{"www.oscommunity.cn", juce::URL("https://www.oscommunity.cn")};
+    juce::HyperlinkButton repo{"github.com/enkerewpo/plugshell",
+                               juce::URL("https://github.com/enkerewpo/plugshell")};
+};
+
 class MainComponent : public juce::Component,
                       private juce::ComponentListener,
                       private juce::ChangeListener,
@@ -427,6 +570,10 @@ class MainComponent : public juce::Component,
 public:
     MainComponent()
     {
+        // Before anything is constructed that copies the palette.
+        loadSettings();
+        theme::apply();
+
         juce::addDefaultFormatsToManager(formats);
 
         viewport.setViewedComponent(&list, false);
@@ -436,6 +583,11 @@ public:
         addAndMakeVisible(strip);
 
         scopePanel = std::make_unique<ScopePanel>(tap, theme::base, theme::ink, theme::mute, theme::hair);
+        addAndMakeVisible(themeButton);
+        themeButton.setColours(theme::ink, theme::mute, theme::hair);
+        themeButton.onClick = [this] { cycleTheme(); };
+        refreshThemeButton();
+
         scopePanel->onClick = [this] { showScopeDetail(); };
         scopePanel->onExtentChanged = [this]
         {
@@ -487,6 +639,7 @@ public:
         indexedCount = found.size();
         setStripStatus(juce::String(found.size()) + " plugins indexed");
 
+        applyTheme();
         setSize(920, 640);
     }
 
@@ -535,6 +688,12 @@ public:
                     o.setProperty("name", loadedName);
                     o.setProperty("hasEditor", editor != nullptr);
                     o.setProperty("keysEnabled", keysEnabled);
+                    o.setProperty("theme", theme::mode == theme::Mode::dark    ? "dark"
+                                           : theme::mode == theme::Mode::light ? "light"
+                                                                               : "auto");
+                    o.setProperty("themeIsDark", theme::isDark());
+                    o.setProperty("themeBase", theme::base.toDisplayString(false));
+                    o.setProperty("settingsFile", settingsFile().getFullPathName());
                     o.setProperty("octave", octave);
                     if (instance != nullptr)
                     {
@@ -1001,11 +1160,188 @@ public:
         }
     }
 
+    static juce::String versionString() { return "v" PLUGSHELL_VERSION; }
+
+    /** The wordmark's hit area: the name, the version and the byline together,
+        because they read as one thing and a control should be the size of the
+        thing it looks like. */
+    juce::Rectangle<int> wordmarkBounds() const
+    {
+        const int nameWidth = juce::roundToInt(
+            juce::GlyphArrangement::getStringWidth(theme::ui(theme::size::title), "plugshell"));
+        const int tailWidth = juce::roundToInt(juce::GlyphArrangement::getStringWidth(
+            theme::ui(theme::size::label), versionString() + "   by wheatfox"));
+
+        return {10, 8, nameWidth + tailWidth + 26, 30};
+    }
+
+    /** Dark, light, or whatever macOS is doing. Three states on one control
+        because the choice is small and a panel for it would be larger than
+        the thing it sets. */
+    void cycleTheme()
+    {
+        using Mode = theme::Mode;
+
+        theme::mode = theme::mode == Mode::dark    ? Mode::light
+                      : theme::mode == Mode::light ? Mode::automatic
+                                                   : Mode::dark;
+
+        beginThemeChange();
+        applyTheme();
+        saveSettings();
+    }
+
+    /** Cross-fades between the two palettes rather than cutting.
+
+        Every surface in the window changes at once, and a cut of that size
+        reads as the window having been replaced. Fading it makes it obviously
+        the same window in different light, which is what actually happened. */
+    void beginThemeChange()
+    {
+        themeFrom = theme::paletteFor(!theme::isDark());
+        themeTo = theme::paletteFor(theme::isDark());
+        themeMix.snapTo(0.0f);
+        themeMix.setTarget(1.0f);
+        themeAnim.nudge();
+    }
+
+    void applyTheme()
+    {
+        theme::apply();
+        pushColours();
+    }
+
+    /** Hands the current palette to everything that copied it.
+
+        These all take their colours once, when they are made, which is also
+        why the theme loaded at startup did not appear: members are
+        constructed before the constructor body runs, so they had all taken
+        the default scheme before the saved one was read. */
+    void pushColours()
+    {
+
+        // Every one of these copied the palette in when it was made, so a
+        // switch has to hand it back to each of them. Reading the theme at
+        // paint time instead would avoid this, at the cost of a lookup in
+        // every drawing call in the application.
+        darkLookAndFeel.refresh();
+        strip.refreshColours();
+        themeButton.setColours(theme::ink, theme::mute, theme::hair);
+        list.setColour(juce::ListBox::backgroundColourId, theme::base);
+
+        if (scopePanel != nullptr)
+            scopePanel->setColours(theme::base, theme::ink, theme::mute, theme::hair);
+
+        viewport.setColour(juce::ScrollBar::thumbColourId, theme::hair);
+
+        if (auto* window = getTopLevelComponent())
+            window->setColour(juce::DocumentWindow::backgroundColourId, theme::base);
+
+        refreshThemeButton();
+        repaint();
+
+        // An open panel keeps the colours it was built with, and rebuilding it
+        // under the user would lose whatever they were reading.
+        if (overlay != nullptr)
+            dismissOverlay();
+    }
+
+    void refreshThemeButton()
+    {
+        themeButton.setText({});
+        themeButton.setGlyph(theme::mode == theme::Mode::dark    ? StripButton::Glyph::moon
+                             : theme::mode == theme::Mode::light ? StripButton::Glyph::sun
+                                                                 : StripButton::Glyph::automatic);
+
+        themeButton.setTooltip(theme::mode == theme::Mode::dark    ? "Appearance: dark"
+                               : theme::mode == theme::Mode::light ? "Appearance: light"
+                                                                   : "Appearance: following macOS");
+    }
+
+    juce::File settingsFile() const
+    {
+        // userApplicationDataDirectory is ~/Library on macOS, not
+        // ~/Library/Application Support, which is where everything else this
+        // application writes already lives.
+        return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+            .getChildFile("Application Support")
+            .getChildFile("plugshell")
+            .getChildFile("settings.json");
+    }
+
+    void loadSettings()
+    {
+        const auto file = settingsFile();
+        if (!file.existsAsFile())
+            return;
+
+        juce::var parsed;
+        if (juce::JSON::parse(file.loadFileAsString(), parsed).failed() || !parsed.isObject())
+            return;
+
+        const auto name = parsed.getProperty("theme", "dark").toString();
+        theme::mode = name == "light"  ? theme::Mode::light
+                      : name == "auto" ? theme::Mode::automatic
+                                       : theme::Mode::dark;
+    }
+
+    void saveSettings() const
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty("theme", theme::mode == theme::Mode::dark    ? "dark"
+                                : theme::mode == theme::Mode::light ? "light"
+                                                                    : "auto");
+
+        const auto file = settingsFile();
+        file.getParentDirectory().createDirectory();
+        file.replaceWithText(juce::JSON::toString(juce::var(o), true));
+    }
+
+    void showAbout()
+    {
+        if (overlay != nullptr)
+            return dismissOverlay();
+
+        auto o = std::make_unique<Overlay>("plugshell " + versionString(), theme::base, theme::ink,
+                                           theme::mute, theme::hair);
+
+        o->setContent(std::make_unique<AboutContent>(), AboutContent::preferredHeight);
+        o->setFooter("AGPL-3.0-or-later.  Copyright (C) 2026 wheatfox <wheatfox17@icloud.com>");
+        showOverlay(std::move(o));
+    }
+
+    void mouseMove(const juce::MouseEvent& e) override
+    {
+        const bool over = wordmarkBounds().contains(e.getPosition());
+
+        if (over != overWordmark)
+        {
+            overWordmark = over;
+            wordmarkGlow.setTarget(over ? 1.0f : 0.0f);
+            wordmarkAnim.nudge();
+            setMouseCursor(over ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        }
+    }
+
+    void mouseExit(const juce::MouseEvent&) override
+    {
+        overWordmark = false;
+        wordmarkGlow.setTarget(0.0f);
+        wordmarkAnim.nudge();
+    }
+
+    void mouseUp(const juce::MouseEvent& e) override
+    {
+        if (wordmarkBounds().contains(e.getPosition()))
+            showAbout();
+    }
+
     void resized() override
     {
         positionOverlay();
 
         auto r = getLocalBounds();
+        themeButton.setBounds(r.getWidth() - 84, 9, 70, 32);
         strip.setBounds(r.removeFromBottom(stripHeight()));
 
         if (scopePanel != nullptr)
@@ -1903,6 +2239,7 @@ private:
         }
     };
 
+    StripButton themeButton{"Dark"};
     ControlServer control{[this](const juce::var& r) { return handleControl(r); }};
     /** The list fades rather than being switched off. Loading takes seconds
         and the window resizes to the editor on the way, so an instant cut in
@@ -1935,6 +2272,32 @@ private:
     double editorScale = 1.0;
     bool fitting = false;
     bool editorTooBig = false;
+    bool overWordmark = false;
+    theme::Palette themeFrom, themeTo;
+    Eased themeMix{1.0f};
+
+    Animator themeAnim{[this]
+                       {
+                           const bool moving = themeMix.advance(0.20f);
+
+                           if (moving)
+                           {
+                               theme::useMix(themeFrom, themeTo, themeMix.get());
+                               pushColours();
+                           }
+
+                           return moving;
+                       }};
+
+    Eased wordmarkGlow{0.0f};
+
+    Animator wordmarkAnim{[this]
+                          {
+                              const bool moving = wordmarkGlow.advance(0.22f);
+                              if (moving)
+                                  repaint(wordmarkBounds());
+                              return moving;
+                          }};
     bool keysEnabled = false;
     int octave = 4;
     bool loading = false;
