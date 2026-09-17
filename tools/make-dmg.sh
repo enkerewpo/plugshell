@@ -146,7 +146,7 @@ tell application "Finder"
         set current view of container window to icon view
         set toolbar visible of container window to false
         set statusbar visible of container window to false
-        set the bounds of container window to {180, 120, 860, 628}
+        set the bounds of container window to {170, 110, 870, 658}
 
         set opts to the icon view options of container window
         set arrangement of opts to not arranged
@@ -154,9 +154,9 @@ tell application "Finder"
         set text size of opts to 12
         set background picture of opts to file ".background:background.tiff"
 
-        set position of item "$APP_NAME.app" of container window to {180, 225}
-        set position of item "Applications" of container window to {500, 225}
-        set position of item "INSTALL.txt" of container window to {598, 372}
+        set position of item "$APP_NAME.app" of container window to {185, 235}
+        set position of item "Applications" of container window to {505, 235}
+        set position of item "INSTALL.txt" of container window to {612, 438}
 
         -- Out of the window entirely. It has to be on the volume, because it
         -- holds the picture behind all of this, but a Finder set to reveal
