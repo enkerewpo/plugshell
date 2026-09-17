@@ -116,19 +116,36 @@ is not a workaround; it is the documented entitlement for exactly this case.
 
 ## Without a Developer ID
 
-The image still builds, and `make dmg` says plainly what it is worth. Three
-honest options, in the order worth considering them.
+You can still distribute. macOS does not require anyone's permission to hand
+out software, and `make dmg` still builds an image. What you cannot do is hand
+out an image that opens without a detour, and the detours are getting narrower.
 
-**Ship source.** This is an AGPL project and building it is `make deps &&
-make build`. Most open-source audio software distributes this way and nobody
-finds it strange. It costs nothing and has no Gatekeeper problem, because the
-user built it themselves.
+Note also that an expired membership is not the same as never having had one.
+A Developer ID certificate issued while a membership was active keeps working
+until the certificate itself expires, years later, so builds can go on being
+signed. But **notarisation requires an active membership**, and so does
+creating a certificate in the first place. Letting a membership lapse with no
+certificate in hand leaves nothing behind.
 
-**A Homebrew cask.** `brew install --cask` removes the quarantine attribute as
-part of installing, which is not a trick — the user asked for the software by
-name on their own command line, which is the consent Gatekeeper is trying to
-obtain. This is the best unsigned experience available and it is a normal way
-to ship developer-facing macOS software.
+Three honest options, in the order worth considering them.
+
+**Ship source.** This is the recommended answer for this project, not a
+consolation prize. It is an AGPL project, building it is `make deps && make
+build`, and its audience — people wiring a plugin host to an agent — already
+has a terminal open. A locally built application is signed ad-hoc, which is
+enough for macOS to run it, and Gatekeeper never enters the picture because
+nothing was downloaded. It also happens to be what the licence requires anyone
+redistributing binaries to offer regardless.
+
+**A Homebrew tap of your own.** This used to be the good answer and is now a
+qualified one. Homebrew is
+[removing `--no-quarantine`](https://github.com/Homebrew/brew/issues/20755),
+and the main cask repository
+[began disabling casks that fail Gatekeeper on 1 September 2026](https://github.com/orgs/Homebrew/discussions/6334)
+— 387 of 7624 casks, about five per cent. A tap you host yourself is not
+subject to the main repository's policy, so this still works, but it is now a
+route that is being closed rather than one being kept open, and anything
+written about it before late 2025 describes a world that no longer exists.
 
 **An unsigned image with instructions.** Works, and asks the most of the user.
 The route on current macOS is to open the app, let it be blocked, then go to
@@ -136,6 +153,10 @@ System Settings > Privacy & Security, where an *Open Anyway* button appears for
 about an hour after the attempt. The older Control-click > Open shortcut was
 removed in a recent macOS release, so any instructions that mention it are out
 of date and will waste your users' time.
+
+Note the direction of all of this. Every bypass except building from source has
+narrowed in the last two years, and none of them has widened. Plans that depend
+on one of them should expect to be revisited.
 
 Do not tell people to run `sudo spctl --master-disable`. It turns off
 Gatekeeper for everything they will ever install, to solve a problem with one
