@@ -26,16 +26,30 @@ class KeyMonitor
 public:
     /** Returns true to consume the event, false to let it through.
         @param character  the character ignoring modifiers, lowercased
+        @param keyCode    the hardware key, for asking later whether it is
+                          still held; the character is not enough, because the
+                          layout can change between a press and its release
         @param isDown     true for key down, false for key up
         @param isRepeat   true when the system is auto-repeating
         @param commandDown  whether the command modifier is held */
-    using Handler = std::function<bool(int character, bool isDown, bool isRepeat, bool commandDown)>;
+    using Handler =
+        std::function<bool(int character, int keyCode, bool isDown, bool isRepeat, bool commandDown)>;
 
     KeyMonitor();
     ~KeyMonitor();
 
     void start(Handler h);
     void stop();
+
+    /** Whether the hardware key is held right now, asked of the window server
+        rather than inferred from the events seen so far.
+
+        A key-up can go missing -- an input method swallows it, focus moves
+        between the press and the release, the system drops it under several
+        keys at once -- and a note whose release never arrives sounds forever.
+        Rather than trying to enumerate the ways an event can be lost, the
+        keyboard is polled: anything no longer physically down is released. */
+    static bool isHeld(int keyCode);
 
 private:
     void* monitor = nullptr; // NSEvent monitor token

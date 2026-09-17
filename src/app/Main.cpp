@@ -413,8 +413,10 @@ public:
         // Watched at the platform layer rather than through focus: a plugin
         // editor is a native view, so once the user clicks inside it the host's
         // component tree stops seeing keys at all.
-        keyMonitor.start([this](int c, bool down, bool repeat, bool cmd)
-                         { return onKey(c, down, repeat, cmd); });
+        keyMonitor.start([this](int c, int code, bool down, bool repeat, bool cmd)
+                         { return onKey(c, code, down, repeat, cmd); });
+
+        stuckKeyWatchdog.tick = [this] { releaseKeysNoLongerHeld(); };
 
         const auto found = PluginIndex::scanDirectories();
         list.setItems(found);
@@ -707,8 +709,13 @@ private:
 
         keysEnabled = on;
 
-        if (!on)
+        if (on)
+            stuckKeyWatchdog.startTimerHz(20);
+        else
+        {
+            stuckKeyWatchdog.stopTimer();
             allNotesOff();
+        }
 
         strip.setKeys(keysEnabled, octave);
     }
@@ -746,13 +753,14 @@ private:
             sendNoteOff(it.getValue());
 
         sounding.clear();
+        heldCodes.clear();
         strip.setPlaying({}, {});
     }
 
     static double now() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
 
     /** @return true when the event has been consumed. */
-    bool onKey(int c, bool isDown, bool isRepeat, bool commandDown)
+    bool onKey(int c, int keyCode, bool isDown, bool isRepeat, bool commandDown)
     {
         if (commandDown)
         {
@@ -805,6 +813,7 @@ private:
 
             const int note = juce::jlimit(0, 127, octave * 12 + offset);
             sounding.set(c, note);
+            heldCodes.set(c, keyCode);
             player.getMidiMessageCollector().addMessageToQueue(
                 juce::MidiMessage::noteOn(1, note, 0.8f).withTimeStamp(now()));
             updatePlaying();
@@ -828,12 +837,35 @@ private:
     {
         const int note = sounding[c];
         sounding.remove(c);
+        heldCodes.remove(c);
 
         for (juce::HashMap<int, int>::Iterator it(sounding); it.next();)
             if (it.getValue() == note)
                 return; // another key is still holding this note
 
         sendNoteOff(note);
+    }
+
+    /** Releases anything whose key the window server says is no longer down.
+
+        Every stuck note is the same bug in the end -- a key-up that never
+        arrived -- and the causes are not worth enumerating, because the
+        keyboard itself can be asked. This runs while the mode is on and costs
+        one syscall per held key, twenty times a second. */
+    void releaseKeysNoLongerHeld()
+    {
+        juce::Array<int> lost;
+        for (juce::HashMap<int, int>::Iterator it(heldCodes); it.next();)
+            if (!KeyMonitor::isHeld(it.getValue()))
+                lost.add(it.getKey());
+
+        if (lost.isEmpty())
+            return;
+
+        for (const auto c : lost)
+            releaseKey(c);
+
+        updatePlaying();
     }
 
     void sendNoteOff(int note)
@@ -1151,6 +1183,19 @@ private:
     juce::AudioDeviceManager devices;
     juce::AudioProcessorPlayer player;
     AnalyserTap tap{player};
+    /** A timer that is not the loading spinner's. */
+    struct Watchdog : juce::Timer
+    {
+        std::function<void()> tick;
+        void timerCallback() override
+        {
+            if (tick)
+                tick();
+        }
+    };
+
+    Watchdog stuckKeyWatchdog;
+    juce::HashMap<int, int> heldCodes; // character -> hardware key
     std::unique_ptr<ScopePanel> scopePanel;
     juce::AudioPluginFormatManager formats;
     std::unique_ptr<juce::AudioPluginInstance> instance;

@@ -35,14 +35,22 @@ void KeyMonitor::start(Handler h)
                                              return event;
 
                                          const int c = (int)[[chars lowercaseString] characterAtIndex:0];
+                                         const int code = (int)[event keyCode];
                                          const bool isDown = ([event type] == NSEventTypeKeyDown);
                                          const bool isRepeat = isDown && [event isARepeat];
                                          const bool cmd =
                                              ([event modifierFlags] & NSEventModifierFlagCommand) != 0;
 
                                          // Returning nil swallows the event; returning it passes it on.
-                                         return handler(c, isDown, isRepeat, cmd) ? nil : event;
+                                         return handler(c, code, isDown, isRepeat, cmd) ? nil : event;
                                      }];
+}
+
+bool KeyMonitor::isHeld(int keyCode)
+{
+    // The combined session state, not the HID state, so a key sent by a script
+    // or an accessibility tool counts as held the same as a finger does.
+    return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, (CGKeyCode)keyCode);
 }
 
 void KeyMonitor::stop()
