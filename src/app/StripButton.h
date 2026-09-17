@@ -5,6 +5,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "Eased.h"
+
 namespace plugshell
 {
 
@@ -32,7 +34,8 @@ public:
     void setToggled(bool on)
     {
         toggled = on;
-        repaint();
+        on ? lit.setTarget(1.0f) : lit.setTarget(0.0f);
+        anim.nudge();
     }
 
     void setColours(juce::Colour normal, juce::Colour dim, juce::Colour outline)
@@ -54,38 +57,42 @@ public:
     {
         const auto pill = getLocalBounds().reduced(2, 8).toFloat();
 
-        if (hovering)
+        const float hoverAmount = hover.get();
+        const float litAmount = lit.get();
+
+        if (hoverAmount > 0.001f)
         {
-            g.setColour(ink.withAlpha(0.12f));
+            g.setColour(ink.withAlpha(0.12f * hoverAmount));
             g.fillRoundedRectangle(pill, 5.0f);
         }
 
         if (framed)
         {
-            if (toggled)
+            if (litAmount > 0.001f)
             {
-                g.setColour(ink.withAlpha(0.18f));
+                g.setColour(ink.withAlpha(0.18f * litAmount));
                 g.fillRoundedRectangle(pill, 5.0f);
             }
-            g.setColour(toggled ? ink : hair);
+
+            g.setColour(hair.interpolatedWith(ink, litAmount));
             g.drawRoundedRectangle(pill, 5.0f, 1.0f);
         }
 
-        g.setColour(toggled || !framed ? ink : mute);
+        g.setColour(framed ? mute.interpolatedWith(ink, litAmount) : ink);
         g.setFont(juce::Font(juce::FontOptions(11.5f)));
         g.drawText(label, getLocalBounds(), juce::Justification::centred);
     }
 
     void mouseEnter(const juce::MouseEvent&) override
     {
-        hovering = true;
-        repaint();
+        hover.setTarget(1.0f);
+        anim.nudge();
     }
 
     void mouseExit(const juce::MouseEvent&) override
     {
-        hovering = false;
-        repaint();
+        hover.setTarget(0.0f);
+        anim.nudge();
     }
 
     void mouseUp(const juce::MouseEvent& e) override
@@ -97,9 +104,21 @@ public:
     juce::MouseCursor getMouseCursor() override { return juce::MouseCursor::PointingHandCursor; }
 
 private:
+    Eased hover{0.0f}, lit{0.0f};
+
+    // Faster than the panels: a button should feel like it responded, not
+    // like it is playing an animation at you.
+    Animator anim{[this]
+                  {
+                      const bool moving = hover.advance(0.38f) | lit.advance(0.38f);
+                      if (moving)
+                          repaint();
+                      return moving;
+                  }};
+
     juce::String label;
     juce::Colour ink{0xffe4e4e4}, mute{0xff7a7a7a}, hair{0xff2e2e2e};
-    bool hovering = false, toggled = false, framed = false;
+    bool toggled = false, framed = false;
 };
 
 } // namespace plugshell

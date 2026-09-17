@@ -5,6 +5,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "Eased.h"
 #include "StripButton.h"
 
 namespace plugshell
@@ -33,6 +34,9 @@ public:
         : title(std::move(heading)), colBase(base), colInk(ink), colMute(mute), colHair(hair)
     {
         setWantsKeyboardFocus(true);
+        appear.snapTo(0.0f);
+        appear.setTarget(1.0f);
+        anim.nudge();
     }
 
     void setRows(juce::Array<juce::StringArray> r)
@@ -70,9 +74,26 @@ public:
         repaint();
     }
 
+    /** Called back when a dismissal has finished fading, so the owner can
+        let go of the window rather than removing it mid-fade. */
+    std::function<void()> onFadedOut;
+
+    /** Starts the panel on its way out. It is not gone until onFadedOut. */
+    void beginFadeOut()
+    {
+        if (leaving)
+            return;
+
+        leaving = true;
+        appear.setTarget(0.0f);
+        anim.nudge();
+    }
+
     void paint(juce::Graphics& g) override
     {
-        g.fillAll(colBase.withAlpha(0.94f));
+        const float t = appear.get();
+
+        g.fillAll(colBase.withAlpha(0.94f * t));
 
         const auto panel = panelBounds();
         g.setColour(colBase);
@@ -163,12 +184,41 @@ public:
 private:
     juce::Rectangle<int> panelBounds() const
     {
+        // Rises the last few pixels as it fades in. Enough to read as arriving
+        // from somewhere; not enough to be watched.
+        const int lift = juce::roundToInt((1.0f - appear.get()) * 10.0f);
+        return restingPanelBounds().translated(0, lift);
+    }
+
+    juce::Rectangle<int> restingPanelBounds() const
+    {
         const int w = juce::jmin(maxPanelWidth, getWidth() - 80);
         const int h = content != nullptr
                           ? juce::jmin(contentHeight + (footer.isEmpty() ? 100 : 156), getHeight() - 80)
                           : juce::jmin(72 + rows.size() * 28 + 40, getHeight() - 80);
         return juce::Rectangle<int>(w, h).withCentre(getLocalBounds().getCentre());
     }
+
+    Eased appear{0.0f};
+    bool leaving = false;
+
+    Animator anim{[this]
+                  {
+                      const bool moving = appear.advance(0.26f);
+
+                      if (moving)
+                      {
+                          setAlpha(appear.get());
+                          repaint();
+                      }
+                      else if (leaving && onFadedOut)
+                      {
+                          onFadedOut();
+                          return false;
+                      }
+
+                      return moving;
+                  }};
 
     juce::String title;
     juce::Array<juce::StringArray> rows;

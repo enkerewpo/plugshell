@@ -11,6 +11,7 @@
 #include "AnalyserTap.h"
 #include "ChordName.h"
 #include "ControlServer.h"
+#include "Eased.h"
 #include "EditorProbe.h"
 #include "KeyMonitor.h"
 #include "OfflineRender.h"
@@ -79,16 +80,21 @@ public:
     {
         g.fillAll(theme::base);
 
+        // One highlight that travels, rather than a fill switched on under
+        // each row in turn. Moving it is what makes a list of eighty-nine
+        // things feel like one surface instead of eighty-nine of them.
+        if (glow.get() > 0.001f)
+        {
+            g.setColour(theme::raised.withMultipliedAlpha(glow.get()));
+            g.fillRect(0, juce::roundToInt(highlightY.get()), getWidth(), rowH);
+        }
+
         for (int i = 0; i < plugins.size(); ++i)
         {
             const auto& p = plugins.getReference(i);
             const int y = i * rowH;
 
-            if (i == hovered)
-            {
-                g.setColour(theme::raised);
-                g.fillRect(0, y, getWidth(), rowH);
-            }
+            juce::ignoreUnused(i);
 
             g.setColour(theme::ink);
             g.setFont(theme::ui(theme::size::body));
@@ -115,14 +121,33 @@ public:
         if (next != hovered)
         {
             hovered = next;
-            repaint();
+
+            if (hovered >= 0)
+            {
+                // Jumped into place when arriving from nowhere, so the
+                // highlight does not fly across the whole list to meet the
+                // cursor; slid when moving between rows.
+                if (glow.getTarget() < 0.5f)
+                    highlightY.snapTo((float) (hovered * rowH));
+                else
+                    highlightY.setTarget((float) (hovered * rowH));
+
+                glow.setTarget(1.0f);
+            }
+            else
+            {
+                glow.setTarget(0.0f);
+            }
+
+            anim.nudge();
         }
     }
 
     void mouseExit(const juce::MouseEvent&) override
     {
         hovered = -1;
-        repaint();
+        glow.setTarget(0.0f);
+        anim.nudge();
     }
 
     void mouseDoubleClick(const juce::MouseEvent& e) override
@@ -141,6 +166,16 @@ public:
     }
 
 private:
+    Eased highlightY{0.0f}, glow{0.0f};
+
+    Animator anim{[this]
+                  {
+                      const bool moving = highlightY.advance(0.42f) | glow.advance(0.30f);
+                      if (moving)
+                          repaint();
+                      return moving;
+                  }};
+
     juce::Array<IndexedPlugin> plugins;
     int hovered = -1;
 };
@@ -987,6 +1022,8 @@ private:
         // child order. The overlay therefore lives in its own always-on-top
         // window placed over this one, which is the only way to draw across an
         // embedded editor rather than around it.
+        finishDismissingOverlay();
+
         overlay = std::move(o);
         overlay->onDismiss = [this] { dismissOverlay(); };
 
@@ -1015,6 +1052,22 @@ private:
     }
 
     void dismissOverlay()
+    {
+        if (overlay != nullptr)
+        {
+            // Asked to leave rather than removed outright: a panel that
+            // vanishes between two frames reads as a glitch, and the same
+            // movement that brought it in is what makes it clear it has gone
+            // back rather than gone wrong.
+            overlay->onFadedOut = [this] { finishDismissingOverlay(); };
+            overlay->beginFadeOut();
+            return;
+        }
+
+        finishDismissingOverlay();
+    }
+
+    void finishDismissingOverlay()
     {
         if (overlay != nullptr)
         {
@@ -1068,7 +1121,8 @@ private:
     class SettingsBody : public juce::Component
     {
     public:
-        SettingsBody(std::unique_ptr<juce::Component> main) : content(std::move(main))
+        SettingsBody(std::unique_ptr<juce::Component> main, std::function<juce::String()> latency)
+            : content(std::move(main)), latencyText(std::move(latency))
         {
             addAndMakeVisible(content.get());
 
@@ -1092,7 +1146,24 @@ private:
                 addAndMakeVisible(r);
         }
 
-        static int heightOfRows() { return rowHeight * 2; }
+        static int heightOfRows() { return rowHeight * 2 + latencyHeight; }
+
+        void paint(juce::Graphics& g) override
+        {
+            // The buffer size above this says 5 ms and the real latency is
+            // often thirty times that, which reads as a contradiction unless
+            // the arithmetic is shown. It is not a contradiction: one is what
+            // the host schedules, the other is what reaches the ear.
+            auto row = getLocalBounds()
+                           .removeFromBottom(rowHeight * 2 + latencyHeight)
+                           .removeFromTop(latencyHeight)
+                           .reduced(0, 6);
+
+            g.setColour(theme::mute);
+            g.setFont(theme::ui(theme::size::micro));
+            g.drawText(latencyText ? latencyText() : juce::String(), row, juce::Justification::centredLeft,
+                       true);
+        }
 
         void resized() override
         {
@@ -1101,11 +1172,13 @@ private:
             for (int i = rows.size(); --i >= 0;)
                 rows[i]->setBounds(r.removeFromBottom(rowHeight));
 
+            r.removeFromBottom(latencyHeight);
             content->setBounds(r.withTrimmedBottom(8));
         }
 
     private:
         static constexpr int rowHeight = 58;
+        static constexpr int latencyHeight = 34;
 
         /** One permission: what it is for, whether it is granted, and the one
             button that can change that.
@@ -1237,6 +1310,7 @@ private:
         };
 
         std::unique_ptr<juce::Component> content;
+        std::function<juce::String()> latencyText;
         juce::OwnedArray<Row> rows;
     };
 
@@ -1260,14 +1334,13 @@ private:
                                                                         /*hideAdvanced*/ false);
 
         sel->setLookAndFeel(&darkLookAndFeel);
-        o->setContent(std::make_unique<SettingsBody>(std::move(sel)), 420 + SettingsBody::heightOfRows());
+        o->setContent(std::make_unique<SettingsBody>(std::move(sel), [this] { return latencyBreakdown(); }),
+                      420 + SettingsBody::heightOfRows());
 
         if (outputIsBluetooth())
-            o->setFooter("Bluetooth output. Most of the " +
-                         juce::String(juce::roundToInt(outputLatencyMs())) +
-                         " ms comes from the wireless link, not the buffer: "
-                         "AAC runs 80-160 ms and no host can shorten it. "
-                         "A wired interface is the only real fix.");
+            o->setFooter("Bluetooth output. The wireless link is where nearly all of that latency is, "
+                         "and no host can shorten it: AAC runs 80-160 ms by design. A wired interface "
+                         "is the only real fix.");
 
         showOverlay(std::move(o));
     }
@@ -1528,6 +1601,26 @@ private:
         return 1000.0 * (double) frames / rate;
     }
 
+    /** Total latency, and where it came from. Written as the sum rather than
+        the total alone, because the buffer size sits directly above it in the
+        panel reporting a number thirty times smaller. */
+    juce::String latencyBreakdown() const
+    {
+        auto* device = devices.getCurrentAudioDevice();
+        if (device == nullptr)
+            return "No output device.";
+
+        const auto rate = device->getCurrentSampleRate();
+        if (rate <= 0.0)
+            return {};
+
+        const double buffer = 1000.0 * device->getCurrentBufferSizeSamples() / rate;
+        const double hardware = 1000.0 * device->getOutputLatencyInSamples() / rate;
+
+        return "Output latency " + juce::String(buffer + hardware, 1) + " ms  =  " + juce::String(buffer, 1) +
+               " ms buffer  +  " + juce::String(hardware, 1) + " ms device";
+    }
+
     bool outputIsBluetooth() const
     {
         auto* device = devices.getCurrentAudioDevice();
@@ -1676,6 +1769,10 @@ private:
         instance.reset();
         loadedName = {};
         viewport.setVisible(true);
+        viewport.setAlpha(0.0f);
+        pageFade.snapTo(0.0f);
+        pageFade.setTarget(1.0f);
+        pageAnim.nudge();
         strip.showBack(false);
         setStripStatus("Select a plugin");
         repaint();
@@ -1688,7 +1785,8 @@ private:
         loading = true;
         loadingName = p.name;
         spinner = 0.0;
-        viewport.setVisible(false);
+        pageFade.setTarget(0.0f);
+        pageAnim.nudge();
         setMouseCursor(juce::MouseCursor::WaitCursor);
         startTimerHz(30);
         setStripStatus("Loading " + p.name + "...");
@@ -1775,6 +1873,23 @@ private:
     };
 
     ControlServer control{[this](const juce::var& r) { return handleControl(r); }};
+    /** The list fades rather than being switched off. Loading takes seconds
+        and the window resizes to the editor on the way, so an instant cut in
+        the middle of that reads as the window having been replaced. */
+    Eased pageFade{1.0f};
+
+    Animator pageAnim{[this]
+                      {
+                          const bool moving = pageFade.advance(0.22f);
+
+                          if (moving)
+                              viewport.setAlpha(pageFade.get());
+                          else if (pageFade.get() < 0.01f)
+                              viewport.setVisible(false);
+
+                          return moving;
+                      }};
+
     Watchdog stuckKeyWatchdog;
     juce::HashMap<int, int> heldCodes; // character -> hardware key
     std::unique_ptr<ScopePanel> scopePanel;
