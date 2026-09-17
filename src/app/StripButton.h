@@ -43,6 +43,10 @@ public:
 
     std::function<void()> onClick;
 
+    /** Vertical drag, in whole steps, for a control that holds a number.
+        Set it and the button stops reporting a click that was really a drag. */
+    std::function<void(int steps)> onDrag;
+
     explicit StripButton(juce::String text) : label(std::move(text)) {}
 
     void setText(juce::String t)
@@ -175,13 +179,36 @@ public:
         anim.nudge();
     }
 
+    void mouseDown(const juce::MouseEvent&) override { dragged = 0; }
+
+    void mouseDrag(const juce::MouseEvent& e) override
+    {
+        if (!onDrag)
+            return;
+
+        // Four points to a step, so a whole number can be landed on.
+        const int steps = -e.getDistanceFromDragStartY() / 4;
+
+        if (steps != dragged)
+        {
+            onDrag(steps - dragged);
+            dragged = steps;
+        }
+    }
+
     void mouseUp(const juce::MouseEvent& e) override
     {
+        if (dragged != 0)
+            return; // that was a drag, not a click
+
         if (getLocalBounds().contains(e.getPosition()) && onClick)
             onClick();
     }
 
-    juce::MouseCursor getMouseCursor() override { return juce::MouseCursor::PointingHandCursor; }
+    juce::MouseCursor getMouseCursor() override
+    {
+        return onDrag ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::PointingHandCursor;
+    }
 
 private:
     Eased hover{0.0f}, lit{0.0f};
@@ -200,6 +227,7 @@ private:
     juce::Colour ink{0xffe4e4e4}, mute{0xff7a7a7a}, hair{0xff2e2e2e};
     static constexpr float textHeight = 12.5f;
 
+    int dragged = 0;
     Glyph glyph = Glyph::none;
     bool toggled = false, framed = false;
 };

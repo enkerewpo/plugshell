@@ -8,6 +8,8 @@
 #include <atomic>
 #include <vector>
 
+#include "HostPlayHead.h"
+
 namespace plugshell
 {
 
@@ -40,6 +42,13 @@ public:
                                           int numOutput, int numSamples,
                                           const juce::AudioIODeviceCallbackContext& ctx) override
     {
+        // Advanced before the plugin runs, not after, so what it reads
+        // describes the block it is about to render. This sits here because
+        // this is the one object that sees every block before the processor
+        // does.
+        if (playHead != nullptr)
+            playHead->advance(numSamples, sampleRate);
+
         inner.audioDeviceIOCallbackWithContext(input, numInput, output, numOutput, numSamples, ctx);
 
         if (numOutput <= 0 || output == nullptr)
@@ -104,8 +113,11 @@ public:
 
     double getSampleRate() const { return sampleRate; }
 
+    void setPlayHead(HostPlayHead* p) { playHead = p; }
+
 private:
     juce::AudioIODeviceCallback& inner;
+    HostPlayHead* playHead = nullptr;
     std::vector<float> left, right;
     std::atomic<int> writePos{0};
     double sampleRate = 48000.0;

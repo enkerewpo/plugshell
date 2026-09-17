@@ -139,8 +139,10 @@ public:
                      {"Black keys", "outlined caps above"},
                      {"Load the plugin under the cursor", "double click"},
                      {"Unload and return to the list", "Back"},
-                     {"Close a panel", "esc"},
+                     {"Close a panel", "Cmd-W, or the cross"},
                      {"Analyser, in the strip / full size", "Scope / click the strip"},
+                     {"Tempo transport, start and stop", "click 120 4/4"},
+                     {"Tempo, change it", "drag 120 4/4 up or down"},
                      {"Waveform view: free, triggered, cycle, envelope", "click the mode beside it"}};
 
         const int lineH = 19;

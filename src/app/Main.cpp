@@ -13,6 +13,7 @@
 #include "ControlServer.h"
 #include "Eased.h"
 #include "EditorProbe.h"
+#include "HostPlayHead.h"
 #include "KeyMonitor.h"
 #include "KeyboardMap.h"
 #include "OfflineRender.h"
@@ -275,10 +276,12 @@ public:
     std::function<void()> onHelp;
     std::function<void()> onSettings;
     std::function<void()> onScope;
+    std::function<void()> onTransport;
+    std::function<void(int)> onTempoDrag;
 
     ControlStrip()
     {
-        for (auto* b : {&back, &keys, &scope, &help, &settings})
+        for (auto* b : {&back, &keys, &scope, &help, &settings, &transport})
         {
             b->setColours(theme::ink, theme::mute, theme::hair);
             addAndMakeVisible(b);
@@ -286,6 +289,19 @@ public:
 
         keys.setFramed(true);
         back.setGlyph(StripButton::Glyph::back);
+
+        transport.setFramed(true);
+        transport.setTooltip("Click to start and stop. Drag up and down for tempo.");
+        transport.onClick = [this]
+        {
+            if (onTransport)
+                onTransport();
+        };
+        transport.onDrag = [this](int steps)
+        {
+            if (onTempoDrag)
+                onTempoDrag(steps);
+        };
         back.onClick = [this]
         {
             if (onBack)
@@ -334,11 +350,11 @@ public:
         the Scope button with it, so the analyser became unreachable on any
         plugin with a narrow editor. Wrapping to a second row keeps every
         control present at every width, which is what a control strip is for. */
-    static int heightFor(int width) { return width < 620 ? rowHeight * 2 - 8 : rowHeight; }
+    static int heightFor(int width) { return width < 720 ? rowHeight * 2 - 8 : rowHeight; }
 
     void refreshColours()
     {
-        for (auto* b : {&back, &keys, &scope, &help, &settings})
+        for (auto* b : {&back, &keys, &scope, &help, &settings, &transport})
             b->setColours(theme::ink, theme::mute, theme::hair);
 
         repaint();
@@ -347,6 +363,15 @@ public:
     void showBack(bool b) { back.setVisible(b); }
 
     void setScopeOpen(bool on) { scope.setToggled(on); }
+
+    /** Tempo and metre, which the plugins that sync to a clock need and which
+        the host has to be asked for -- there is no DAW here to provide it. */
+    void setTransport(bool playing, double bpm, int upper, int lower)
+    {
+        transport.setToggled(playing);
+        transport.setText(juce::String(bpm, bpm == std::floor(bpm) ? 0 : 1) + "  " + juce::String(upper) +
+                          "/" + juce::String(lower));
+    }
 
     void setKeys(bool on, int octave)
     {
@@ -378,7 +403,16 @@ public:
         if (!twoRows)
         {
             row = getLocalBounds();
-            row.removeFromRight(getWidth() - keys.getX()); // buttons own the right
+            // From the leftmost of the right-hand buttons, not from a
+            // particular one of them. Naming `keys` worked until something was
+            // added to its left, and then the status text ran underneath the
+            // new control.
+            int leftmost = getWidth();
+            for (const auto* b : {&transport, &keys, &scope, &help, &settings})
+                if (b->isVisible())
+                    leftmost = juce::jmin(leftmost, b->getX());
+
+            row.removeFromRight(getWidth() - leftmost); // buttons own the right
             if (back.isVisible())
                 row.removeFromLeft(back.getRight() + 12);
             else
@@ -448,6 +482,7 @@ public:
         help.setBounds(buttons.removeFromRight(56));
         scope.setBounds(buttons.removeFromRight(72).reduced(4, 0));
         keys.setBounds(buttons.removeFromRight(keysWidth).reduced(6, 0));
+        transport.setBounds(buttons.removeFromRight(96).reduced(4, 0));
 
         if (twoRows)
         {
@@ -466,7 +501,8 @@ public:
 private:
     bool twoRows = false;
     juce::Rectangle<int> textRow;
-    StripButton back{"Back"}, keys{"keys off"}, scope{"Scope"}, help{"Help"}, settings{"Settings"};
+    StripButton back{"Back"}, keys{"keys off"}, scope{"Scope"}, help{"Help"}, settings{"Settings"},
+        transport{"120  4/4"};
     juce::String status{"Select a plugin"}, right, rightMedium, rightShort, playedNotes, playedChord;
 };
 
@@ -604,6 +640,24 @@ public:
         strip.onToggleKeys = [this] { setKeysEnabled(!keysEnabled); };
         strip.onHelp = [this] { showHelp(); };
         strip.onSettings = [this] { showSettings(); };
+        strip.onTransport = [this]
+        {
+            playHead.setPlaying(!playHead.isPlaying());
+
+            // From the top each time it starts. A transport that resumes from
+            // wherever it was left is a DAW's job; here the point is to hear a
+            // synced effect from a known place.
+            if (playHead.isPlaying())
+                playHead.rewind();
+
+            refreshTransport();
+        };
+
+        strip.onTempoDrag = [this](int steps)
+        {
+            playHead.setTempo(playHead.getTempo() + steps);
+            refreshTransport();
+        };
         strip.onScope = [this]
         {
             // An editor that already fills the display has no room to grow
@@ -624,6 +678,7 @@ public:
                 fitWindowToEditor();
         };
 
+        tap.setPlayHead(&playHead);
         startAudio();
         devices.addChangeListener(this);
 
@@ -641,6 +696,7 @@ public:
         setStripStatus(juce::String(found.size()) + " plugins indexed");
 
         applyTheme();
+        refreshTransport();
         setSize(920, 640);
     }
 
@@ -745,6 +801,35 @@ public:
                     o.setProperty("note", "macOS shows its prompt only once; after a refusal, grant it in "
                                           "System Settings > Privacy & Security > Screen Recording, then "
                                           "restart plugshell");
+                });
+        }
+
+        if (op == "transport")
+        {
+            if (request.hasProperty("bpm"))
+                playHead.setTempo((double) request.getProperty("bpm", 120.0));
+
+            if (request.hasProperty("numerator") || request.hasProperty("denominator"))
+                playHead.setTimeSignature(
+                    (int) request.getProperty("numerator", playHead.getNumerator()),
+                    (int) request.getProperty("denominator", playHead.getDenominator()));
+
+            if (request.hasProperty("playing"))
+                playHead.setPlaying((bool) request.getProperty("playing", false));
+
+            if ((bool) request.getProperty("rewind", false))
+                playHead.rewind();
+
+            strip.repaint();
+
+            return okWith(
+                [this](juce::DynamicObject& o)
+                {
+                    o.setProperty("bpm", playHead.getTempo());
+                    o.setProperty("numerator", playHead.getNumerator());
+                    o.setProperty("denominator", playHead.getDenominator());
+                    o.setProperty("playing", playHead.isPlaying());
+                    o.setProperty("ppq", playHead.getPpq());
                 });
         }
 
@@ -1288,6 +1373,12 @@ public:
         for (int i = c.getNumChildComponents(); --i >= 0;)
             if (auto* child = c.getChildComponent(i))
                 repaintTree(*child);
+    }
+
+    void refreshTransport()
+    {
+        strip.setTransport(playHead.isPlaying(), playHead.getTempo(), playHead.getNumerator(),
+                           playHead.getDenominator());
     }
 
     void refreshThemeButton()
@@ -2383,12 +2474,17 @@ private:
             fitWindowToEditor();
         }
 
+        // Given to the plugin before it is given any audio. A plugin reads
+        // the playhead inside processBlock, so it has to be there by the time
+        // the first block arrives.
+        instance->setPlayHead(&playHead);
         player.setProcessor(instance.get());
 
         setStripStatus(juce::String(instance->getParameters().size()) + " parameters");
         repaint();
     }
 
+    HostPlayHead playHead;
     juce::AudioDeviceManager devices;
     juce::AudioProcessorPlayer player;
     AnalyserTap tap{player};
