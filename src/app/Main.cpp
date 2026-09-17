@@ -1835,6 +1835,15 @@ private:
     /** @return true when the event has been consumed. */
     bool onKey(int c, int keyCode, bool isDown, bool isRepeat, bool commandDown)
     {
+        // A panel is a window of its own and keyboard focus does not reliably
+        // sit on it, which is the same reason the note keys are read here
+        // rather than through the component tree.
+        if (isDown && c == 27 && overlay != nullptr)
+        {
+            dismissOverlay();
+            return true;
+        }
+
         if (commandDown)
         {
             if (isDown && c == 'k')
@@ -2208,7 +2217,9 @@ private:
                 .withButton("Cancel"),
             [this](int result)
             {
-                if (result == 1)
+                // Zero is the first button. It was reading this as one, so
+                // "Close plugin" did nothing and "Cancel" would have closed it.
+                if (result == 0)
                     unload();
             });
     }

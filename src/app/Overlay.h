@@ -108,35 +108,40 @@ public:
 
         g.fillAll(colBase.withAlpha(0.94f * t));
 
-        const auto panel = panelBounds();
+        // Rounded, because a panel floating over the page is a card and a
+        // card has corners. The scrim behind it keeps its square edges -- it
+        // is the window, not the card.
+        const auto panel = panelBounds().toFloat();
+
         g.setColour(colBase);
-        g.fillRect(panel);
+        g.fillRoundedRectangle(panel, cornerRadius);
         g.setColour(colHair);
-        g.drawRect(panel, 1);
+        g.drawRoundedRectangle(panel.reduced(0.5f), cornerRadius, 1.0f);
 
         if (tooNarrow())
         {
             g.setColour(colMute);
             g.setFont(juce::Font(juce::FontOptions(13.0f)));
             g.drawFittedText(title + " needs a wider window.\nWiden it, or press esc and open this again.",
-                             panel.reduced(18), juce::Justification::centred, 4);
+                             panel.reduced(18.0f).toNearestInt(), juce::Justification::centred, 4);
             return;
         }
 
         g.setColour(colInk);
         g.setFont(juce::Font(juce::FontOptions(17.0f)));
-        g.drawText(title, panel.getX() + 24, panel.getY() + 18, 300, 24, juce::Justification::centredLeft);
+        g.drawText(title, juce::Rectangle<float>(panel.getX() + 24.0f, panel.getY() + 18.0f, 300.0f, 24.0f),
+                   juce::Justification::centredLeft);
 
         g.setColour(colMute);
         g.setFont(juce::Font(juce::FontOptions(13.5f)));
-        g.drawText("esc to close", panel.getRight() - 140, panel.getY() + 20, 116, 20,
+        g.drawText("esc to close", panel.getRight() - 140.0f, panel.getY() + 20.0f, 116, 20,
                    juce::Justification::centredRight);
 
         g.setColour(colHair);
-        g.drawLine((float) panel.getX() + 24, (float) panel.getY() + 52, (float) panel.getRight() - 24,
-                   (float) panel.getY() + 52, 1.0f);
+        g.drawLine((float) panel.getX() + 24.0f, (float) panel.getY() + 52.0f,
+                   (float) panel.getRight() - 24.0f, (float) panel.getY() + 52.0f, 1.0f);
 
-        int y = panel.getY() + 68;
+        int y = panel.getY() + 68.0f;
         for (const auto& row : rows)
         {
             if (row.size() == 1)
@@ -145,7 +150,7 @@ public:
                 y += 10;
                 g.setColour(colMute);
                 g.setFont(juce::Font(juce::FontOptions(13.5f)));
-                g.drawText(row[0], panel.getX() + 24, y, 400, 20, juce::Justification::centredLeft);
+                g.drawText(row[0], panel.getX() + 24.0f, y, 400, 20, juce::Justification::centredLeft);
                 y += 28;
                 continue;
             }
@@ -153,11 +158,11 @@ public:
             g.setColour(colInk);
             g.setFont(juce::Font(
                 juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 13.0f, juce::Font::plain)));
-            g.drawText(row[0], panel.getX() + 24, y, 150, 20, juce::Justification::centredLeft);
+            g.drawText(row[0], panel.getX() + 24.0f, y, 150, 20, juce::Justification::centredLeft);
 
             g.setColour(colMute);
             g.setFont(juce::Font(juce::FontOptions(13.5f)));
-            g.drawText(row[1], panel.getX() + 186, y, panel.getWidth() - 220, 20,
+            g.drawText(row[1], panel.getX() + 186, y, panel.getWidth() - 220.0f, 20,
                        juce::Justification::centredLeft);
             y += 26;
         }
@@ -166,13 +171,13 @@ public:
     void resized() override
     {
         if (content != nullptr)
-            content->setVisible(! tooNarrow());
+            content->setVisible(!tooNarrow());
 
-        if (content != nullptr && ! tooNarrow())
+        if (content != nullptr && !tooNarrow())
         {
             const auto panel = panelBounds();
             const int reserve = footer.isEmpty() ? 92 : 148;
-            content->setBounds(panel.getX() + 24, panel.getY() + 68, panel.getWidth() - 48,
+            content->setBounds(panel.getX() + 24.0f, panel.getY() + 68.0f, panel.getWidth() - 48,
                                panel.getHeight() - reserve);
         }
     }
@@ -184,7 +189,7 @@ public:
 
         const auto panel = panelBounds();
         const auto area =
-            juce::Rectangle<int>(panel.getX() + 24, panel.getBottom() - 56, panel.getWidth() - 48, 44);
+            juce::Rectangle<int>(panel.getX() + 24.0f, panel.getBottom() - 56, panel.getWidth() - 48, 44);
         g.setColour(colMute);
         g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.drawFittedText(footer, area, juce::Justification::topLeft, 3);
@@ -212,8 +217,8 @@ private:
     // from and not something worth animating.
     /** Below this the panel cannot lay itself out.
 
-        The title is drawn in a 300-wide box from `panel.getX() + 24`, and
-        "esc to close" in a 116-wide box ending at `panel.getRight() - 24`;
+        The title is drawn in a 300-wide box from `panel.getX() + 24.0f`, and
+        "esc to close" in a 116-wide box ending at `panel.getRight() - 24.0f`;
         narrower than this the two overlap and the label/value rows lose their
         value column entirely. Rendering it anyway produced a panel with the
         heading printed on top of the close hint and every label truncated to
@@ -222,6 +227,8 @@ private:
     static constexpr int minPanelWidth = 420;
 
     bool tooNarrow() const { return getWidth() - 80 < minPanelWidth; }
+
+    static constexpr float cornerRadius = 10.0f;
 
     juce::Rectangle<int> panelBounds() const
     {
