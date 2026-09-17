@@ -320,9 +320,9 @@ private:
         // design needs the shape of a cycle, and the shape of a cycle is not
         // visible in a free-running buffer at any pitch that is not an exact
         // divisor of the window.
-        waveModeHit = area.removeFromTop(0);
         {
-            auto strip = juce::Rectangle<int>(area.getX(), area.getY() - 18, area.getWidth(), 16);
+            // On the title's own row, not floating above the panel.
+            auto strip = juce::Rectangle<int>(area.getX(), area.getY() + 1, area.getWidth(), 15);
             const auto text = juce::String(nameOf(waveView));
             const int width = juce::roundToInt(juce::GlyphArrangement::getStringWidth(
                                   juce::Font(juce::FontOptions(10.5f)), text)) +
@@ -430,7 +430,7 @@ private:
         {
             g.setColour(colMute.withAlpha(0.8f));
             g.setFont(juce::Font(juce::FontOptions(9.5f)));
-            g.drawText(juce::String(juce::Decibels::gainToDecibels(waveGain), 0) + " dB",
+            g.drawText(juce::String((double) juce::Decibels::gainToDecibels(waveGain), 1) + " dB",
                        plot.reduced(4).removeFromTop(12), juce::Justification::right);
         }
     }
