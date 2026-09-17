@@ -4,9 +4,10 @@
 
 **A host that lets an agent work an audio plugin.**
 
-Not only read its parameters — see its editor, click the controls that are not
-parameters, render it to audio, and describe a patch as a sequence of
-operations rather than an opaque binary blob.
+**Agent control** is the point. Not only reading a plugin's parameters — seeing
+its editor, clicking the controls that are not parameters, rendering it to
+audio, and describing a patch as a sequence of operations rather than an opaque
+binary blob. Everything a person can do with a plugin, an agent can do.
 
 > **Status: early, and it runs.** Everything under [What works](#what-works) is
 > built and has been used; everything under [Roadmap](#roadmap) is not.
@@ -82,8 +83,8 @@ actually has is "which one is the filter cutoff".
 
 **Captures the editor as an image**, through the window server, so it works for
 editors drawn by the GPU — which is most modern synths. This is the part no
-other host does, and it is what makes a plugin's own interface available to a
-program at all.
+other host does, and it is what puts a plugin's own interface in front of an
+agent at all.
 
 **Puts synthetic input into the editor.** Clicks, drags and scrolls in the
 editor's own coordinates: the escape hatch for every control a plugin chose not
@@ -105,15 +106,16 @@ guess — and several guess 120 and carry on, which is worse than failing.
 
 ---
 
-## Driving it from an agent
+## Agent control
 
 ```sh
 plugshell --serve                 # 127.0.0.1:8767
 ```
 
 Newline-delimited JSON over a loopback socket, drivable from a shell. That is
-the point: the intended caller is a language model with a terminal, not an
-application compiled against a client library.
+deliberate: the intended caller is an agent with a terminal, not an application
+compiled against a client library. There is nothing to install on the agent's
+side and nothing to generate — it already knows how to run `nc`.
 
 ```sh
 rpc() { printf '%s\n' "$1" | nc -w 5 127.0.0.1 8767; }
@@ -126,10 +128,9 @@ rpc '{"op":"capture","path":"/tmp/editor.png"}'
 rpc '{"op":"drag","at":[0.65,0.13],"to":[0.65,0.30],"normalised":true}'
 ```
 
-### With Claude Code
+### With Claude Code, or Codex
 
-Start the host, then ask for the work. Nothing to install on the agent's side —
-it already has a shell.
+Start the host, then ask for the work in words.
 
 ```sh
 plugshell --load /Library/Audio/Plug-Ins/VST3/Pigments.vst3 --serve &
@@ -177,15 +178,17 @@ needing it stops being programmable.
 **And a parameter value is a number without context.** Knowing that
 `osc1_wt_pos = 0.42` says nothing about what the wavetable looks like there.
 What a person uses to work a plugin is mostly visual, and none of it has been
-available to a program.
+available to an agent.
 
-One consequence: an automated caller can adjust the numbers a plugin chooses to
-publish, and is blind and powerless for everything else.
+One consequence: an agent can adjust the numbers a plugin chooses to publish,
+and is blind and powerless for everything else. Closing that is what this is
+for.
 
 ### What that makes possible
 
-- **Assisted sound design.** Open a synth, look at the editor, change a
-  control, listen, iterate — including controls that are not parameters.
+- **Assisted sound design.** An agent opens a synth, looks at the editor,
+  changes a control, listens, and iterates — including controls that are not
+  parameters.
 - **Measuring what a control does** — not what number it holds. Move it,
   render, compare: [docs/TIMBRE_MODEL.md](docs/TIMBRE_MODEL.md).
 - **Patches as operations**, which can be read, diffed and reasoned about:
