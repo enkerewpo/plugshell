@@ -99,6 +99,21 @@ def shadowed(window: Image.Image, spread: int, drop: int) -> Image.Image:
     return field
 
 
+def rounded(image: Image.Image, radius: int) -> Image.Image:
+    """The whole picture with its corners taken off.
+
+    A square-cornered plate dropped into a page reads as a screenshot of a
+    document. Rounding it is what makes it read as a card belonging to the
+    page it is on.
+    """
+    mask = Image.new("L", image.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, image.width - 1, image.height - 1], radius, fill=255)
+
+    out = image.convert("RGBA")
+    out.putalpha(mask)
+    return out
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
@@ -106,13 +121,28 @@ def main():
     window = Image.open(sys.argv[1]).convert("RGBA")
     out_path = Path(sys.argv[2] if len(sys.argv) > 2 else ROOT / "assets" / "hero.png")
 
-    header_h = 124
-    card_h = 22 + 22 + 18 + 20 * 2 + 22  # inset, icon row, gap, two lines, inset
-    agents_h = 76
-    shot_w = 660
+    # Two by two, so each card is six hundred points wide instead of two
+    # hundred and ninety -- which is what finally allows the type to be the
+    # size it should have been all along. Four across forced every size down
+    # to fit, and the result read as a caption strip.
+    claims = [
+        ("terminal", "agent control", "parameters, presets and the editor, over a socket"),
+        ("camera", "editor capture", "the plugin's own interface, as an image"),
+        ("mouse-pointer-click", "synthetic input", "click and drag what the plugin never published"),
+        ("list-ordered", "universal preset", "a patch as operations, not a binary blob"),
+    ]
+
+    inset = 34
+    gap = 20
+    card_w = (WIDTH - PAD * 2 - gap) / 2
+    card_h = 150
+
+    header_h = 178
+    agents_h = 104
+    shot_w = 760
 
     shot_h = round(window.height * shot_w / window.width)
-    height = header_h + card_h + agents_h + shot_h + 40
+    height = header_h + card_h * 2 + gap + agents_h + shot_h + 52
 
     canvas = Image.new("RGB", (WIDTH * SCALE, height * SCALE), BASE)
     d = ImageDraw.Draw(canvas)
@@ -122,114 +152,85 @@ def main():
 
     # ------------------------------------------------------------ the name
 
+    mark_size = 96
     mark = Image.open(ROOT / "assets" / "icon-1024.png").convert("RGBA")
-    mark = mark.resize((68 * SCALE, 68 * SCALE), Image.LANCZOS)
-    canvas.paste(mark, at(PAD, 26), mark)
+    mark = mark.resize((mark_size * SCALE, mark_size * SCALE), Image.LANCZOS)
+    canvas.paste(mark, at(PAD, 34), mark)
 
-    left = PAD + 68 + 20
+    left = PAD + mark_size + 26
 
-    d.text(at(left, 48), "plugshell", font=font(42), fill=INK, anchor="lm")
+    d.text(at(left, 70), "plugshell", font=font(58), fill=INK, anchor="lm")
     d.text(
-        at(left, 84),
+        at(left, 116),
         "a host that lets an agent work an audio plugin",
-        font=font(20),
+        font=font(26),
         fill=MUTE,
         anchor="lm",
     )
 
     # ---------------------------------------------------------- the claims
-    #
-    # The middle of the picture, and the reason it exists. Marked with an icon
-    # rather than a coloured rule down one side: the rule decorates without
-    # saying anything, and says mostly that a template was used.
 
-    claims = [
-        ("terminal", "agent control", "parameters, presets and\nthe editor, over a socket"),
-        ("camera", "editor capture", "the plugin's own\ninterface, as an image"),
-        ("mouse-pointer-click", "synthetic input", "click and drag what the\nplugin never published"),
-        ("list-ordered", "universal preset", "a patch as operations,\nnot a binary blob"),
-    ]
-
-    # One padding everywhere, one baseline grid. The icon sat alone above the
-    # title with a gap that belonged to neither of them, and the note crowded
-    # the bottom edge -- three different margins in a box 290 wide.
-    inset = 22
-    gap = 16
-    card_w = (WIDTH - PAD * 2 - gap * (len(claims) - 1)) / len(claims)
-    top = header_h
-
-    icon_size = 22
-    title = font(20)
-    body = font(14)
-    leading = 20
+    icon_size = 32
+    title = font(30)
+    body = font(19)
 
     for i, (icon, name, note) in enumerate(claims):
-        x = PAD + (card_w + gap) * i
+        x = PAD + (card_w + gap) * (i % 2)
+        top = header_h + (card_h + gap) * (i // 2)
 
         d.rounded_rectangle(
-            [at(x, top), at(x + card_w, top + card_h)], 12 * SCALE, fill=CARD, outline=HAIR, width=SCALE
+            [at(x, top), at(x + card_w, top + card_h)], 16 * SCALE, fill=CARD, outline=HAIR, width=SCALE
         )
 
-        # Mark and name on one line, because they name the same thing. Stacked,
-        # the icon reads as a separate element that happens to be nearby.
         row = top + inset + icon_size / 2
 
         glyph = svg(icon, icon_size, "#1a1a19", stroke=True)
         canvas.paste(glyph, at(x + inset, row - icon_size / 2), glyph)
 
-        d.text(at(x + inset + icon_size + 11, row), name, font=title, fill=INK, anchor="lm")
-
-        # The note starts a full line below the row, and every line sits on the
-        # same leading, so two cards with different wording still line up.
-        note_top = row + icon_size / 2 + 18
-
-        for n, line in enumerate(note.split("\n")):
-            d.text(at(x + inset, note_top + n * leading), line, font=body, fill=MUTE, anchor="la")
+        d.text(at(x + inset + icon_size + 16, row), name, font=title, fill=INK, anchor="lm")
+        d.text(at(x + inset, row + icon_size / 2 + 30), note, font=body, fill=MUTE, anchor="lm")
 
     # ---------------------------------------------------------- the agents
-    #
-    # In their own colours. A brand mark recoloured to suit a layout stops
-    # being the mark anyone recognises, which is the whole reason to show one.
 
-    y = header_h + card_h + agents_h / 2 + 8
-    logo_h = 32
-    label = font(20)
+    y = header_h + card_h * 2 + gap + agents_h / 2 + 4
+    logo_h = 42
+    label = font(26)
 
     pieces = [("claude", CLAUDE, "Claude Code"), ("openai", OPENAI, "Codex")]
 
-    total = d.textlength("driven by", font=label) / SCALE + 22
+    total = d.textlength("driven by", font=label) / SCALE + 26
     for _, _, name in pieces:
-        total += logo_h + 12 + d.textlength(name, font=label) / SCALE + 46
-    total -= 46
+        total += logo_h + 14 + d.textlength(name, font=label) / SCALE + 54
+    total -= 54
 
     x = (WIDTH - total) / 2
     d.text(at(x, y), "driven by", font=label, fill=MUTE, anchor="lm")
-    x += d.textlength("driven by", font=label) / SCALE + 22
+    x += d.textlength("driven by", font=label) / SCALE + 26
 
     for icon, colour, name in pieces:
         logo = svg(icon, logo_h, colour)
         canvas.paste(logo, at(x, y - logo_h / 2), logo)
-        x += logo_h + 12
+        x += logo_h + 14
 
         d.text(at(x, y), name, font=label, fill=INK, anchor="lm")
-        x += d.textlength(name, font=label) / SCALE + 46
+        x += d.textlength(name, font=label) / SCALE + 54
 
     # ------------------------------------------------- the window, as proof
 
     shot = window.resize((shot_w * SCALE, shot_h * SCALE), Image.LANCZOS)
-    framed = shadowed(shot, 18 * SCALE, 12 * SCALE)
+    framed = shadowed(shot, 20 * SCALE, 14 * SCALE)
 
     canvas.paste(
         framed,
         (
             (WIDTH * SCALE - framed.width) // 2,
-            round((header_h + card_h + agents_h) * SCALE) - 18 * SCALE * 3 + 12 * SCALE,
+            round((header_h + card_h * 2 + gap + agents_h) * SCALE) - 20 * SCALE * 3 + 14 * SCALE,
         ),
         framed,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(out_path)
+    rounded(canvas, 22 * SCALE).save(out_path)
     print(f"wrote {out_path}  {canvas.size[0]}x{canvas.size[1]}")
 
 
