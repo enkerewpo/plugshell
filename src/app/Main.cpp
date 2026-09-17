@@ -600,7 +600,7 @@ public:
         addAndMakeVisible(scopePanel.get());
 
         list.onChoose = [this](const IndexedPlugin& p) { load(p); };
-        strip.onBack = [this] { unload(); };
+        strip.onBack = [this] { confirmUnload(); };
         strip.onToggleKeys = [this] { setKeysEnabled(!keysEnabled); };
         strip.onHelp = [this] { showHelp(); };
         strip.onSettings = [this] { showSettings(); };
@@ -1183,11 +1183,19 @@ public:
     {
         using Mode = theme::Mode;
 
+        // Captured before the mode moves. Working the starting palette out
+        // afterwards from the opposite of where we ended up is wrong whenever
+        // the two modes agree -- switching between "dark" and "automatic" on a
+        // dark system changes nothing visible, but that reasoning said the
+        // window had been light, so it flashed white on the way to where it
+        // already was.
+        const auto before = theme::paletteFor(theme::isDark());
+
         theme::mode = theme::mode == Mode::dark    ? Mode::light
                       : theme::mode == Mode::light ? Mode::automatic
                                                    : Mode::dark;
 
-        beginThemeChange();
+        beginThemeChange(before);
         saveSettings();
     }
 
@@ -1196,9 +1204,9 @@ public:
         Every surface in the window changes at once, and a cut of that size
         reads as the window having been replaced. Fading it makes it obviously
         the same window in different light, which is what actually happened. */
-    void beginThemeChange()
+    void beginThemeChange(const theme::Palette& from)
     {
-        themeFrom = theme::paletteFor(!theme::isDark());
+        themeFrom = from;
         themeTo = theme::paletteFor(theme::isDark());
 
         // Start from where we are, not from the destination. Applying the new
@@ -1384,8 +1392,7 @@ public:
             // setTopLeftPosition works in unscaled coordinates, so divide the
             // target back out by the transform we applied.
             const auto a = contentArea();
-            editor->setTopLeftPosition(juce::roundToInt(a.getX() / editorScale),
-                                       juce::roundToInt(a.getY() / editorScale));
+            editorView.setBounds(a);
         }
     }
 
@@ -1498,9 +1505,8 @@ private:
         o->setContent(std::make_unique<KeyboardMap>(theme::base, theme::ink, theme::mute, theme::hair),
                       KeyboardMap::preferredHeight);
 
-        o->setFooter("Cmd-K turns the computer keyboard on and off. It is off by default, because "
-                     "plugin editors want the keyboard too -- for typing values and searching presets. "
-                     "Double click a plugin in the list to load it.");
+        o->setFooter("The computer keyboard is off by default: plugin editors want it too, for typing "
+                     "values and searching presets.");
 
         showOverlay(std::move(o));
     }
@@ -2105,7 +2111,11 @@ private:
 
         editorTooBig = wantW > availW || editor->getHeight() + chrome > availH;
 
-        setSize(juce::jmin(wantW, availW), juce::jmin(wantH, availH));
+        // Room for the scrollbars when the editor will not fit, so they do
+        // not sit on top of the plugin's own bottom row.
+        const int bars = editorTooBig ? 12 : 0;
+
+        setSize(juce::jmin(wantW + bars, availW), juce::jmin(wantH + bars, availH));
     }
 
     /** The window is sized to the plugin rather than to the display, so it can
@@ -2130,6 +2140,30 @@ private:
 
         if (x != b.getX() || y != b.getY())
             top->setTopLeftPosition(x, y);
+    }
+
+    /** Back closes the plugin, and closing it loses anything unsaved inside
+        it. The host cannot know whether there is anything unsaved -- a plugin
+        does not tell it -- so it asks rather than guessing. */
+    void confirmUnload()
+    {
+        if (instance == nullptr)
+            return unload();
+
+        juce::NativeMessageBox::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                .withTitle("Close " + loadedName + "?")
+                .withMessage("This unloads the plugin. Anything you have not saved inside it -- a "
+                             "preset you have been editing, settings it keeps to itself -- goes with "
+                             "it.\n\nSave your work in the plugin first if you need it.")
+                .withButton("Close plugin")
+                .withButton("Cancel"),
+            [this](int result)
+            {
+                if (result == 1)
+                    unload();
+            });
     }
 
     /** Brings the plugin list back, opaque.
@@ -2164,7 +2198,8 @@ private:
         if (editor != nullptr)
         {
             editor->removeComponentListener(this);
-            removeChildComponent(editor.get());
+            editorView.setViewedComponent(nullptr, false);
+            removeChildComponent(&editorView);
             editor.reset();
         }
         instance.reset();
@@ -2245,7 +2280,18 @@ private:
         if (auto* e = instance->createEditorIfNeeded())
         {
             editor.reset(e);
-            addAndMakeVisible(editor.get());
+            // Hosted in a viewport rather than placed directly.
+            //
+            // Editors are routinely larger than the display -- Youlean's is
+            // 1740 wide against 1670 of usable screen -- and the host has only
+            // three options for the excess: scale it, clip it, or scroll it.
+            // Scaling a native view does not shrink what it draws, it only
+            // takes away the room it draws into. Clipping is what produced the
+            // overlapping, doubled rendering that made this visible. Scrolling
+            // is the one that loses nothing.
+            editorView.setViewedComponent(editor.get(), false);
+            editorView.setScrollBarsShown(true, true, true, true);
+            addAndMakeVisible(editorView);
             // Several plugins let the user resize their own editor. When that
             // happens the editor changes its bounds and the host has to follow,
             // or the window no longer matches what the plugin is drawing.
@@ -2346,6 +2392,7 @@ private:
     juce::String loadedName;
     PluginList list;
     juce::Viewport viewport;
+    juce::Viewport editorView;
     ControlStrip strip;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)

@@ -88,7 +88,7 @@ public:
     {
     }
 
-    static constexpr int preferredHeight = 186;
+    static constexpr int preferredHeight = 300;
 
     void paint(juce::Graphics& g) override
     {
@@ -125,15 +125,41 @@ public:
             y += keyH + gap;
         }
 
-        // The legend, which is two facts: what the shading means, and that the
-        // two octave keys sit at the ends of the rows so the hand does not
-        // have to leave the playing position to reach them.
-        auto legend = juce::Rectangle<int>(area.getX(), y + 6, area.getWidth(), 18);
+        y += 10;
 
-        g.setColour(colMute);
-        g.setFont(juce::Font(juce::FontOptions(11.0f)));
-        g.drawText("filled = white key    outlined = black key    \\ and / shift the octave", legend,
-                   juce::Justification::centredLeft);
+        // What each thing does, and what presses it. A paragraph explaining
+        // the same facts is a paragraph nobody reads to find a key in.
+        static const struct Line
+        {
+            const char* what;
+            const char* press;
+        } lines[] = {{"Keyboard as MIDI, on and off", "Cmd-K"},
+                     {"Octave down / up", "\\   /"},
+                     {"White keys", "filled caps above"},
+                     {"Black keys", "outlined caps above"},
+                     {"Load the plugin under the cursor", "double click"},
+                     {"Unload and return to the list", "Back"},
+                     {"Close a panel", "esc"},
+                     {"Analyser, in the strip / full size", "Scope / click the strip"},
+                     {"Waveform view: free, triggered, cycle, envelope", "click the mode beside it"}};
+
+        const int lineH = 19;
+
+        for (const auto& line : lines)
+        {
+            auto row = juce::Rectangle<int>(area.getX(), y, area.getWidth(), lineH);
+
+            g.setColour(colMute);
+            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.drawText(line.what, row.removeFromLeft(row.getWidth() - 210), juce::Justification::centredLeft,
+                       true);
+
+            g.setColour(colInk);
+            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.drawText(line.press, row, juce::Justification::centredRight, true);
+
+            y += lineH;
+        }
     }
 
 private:
