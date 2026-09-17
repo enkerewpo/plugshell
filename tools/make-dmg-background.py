@@ -77,7 +77,7 @@ def draw(scale: int) -> Image.Image:
     d.text(at(WINDOW[0] / 2, 48), "plugshell", font=title, fill=INK, anchor="mm")
     d.text(
         at(WINDOW[0] / 2, 77),
-        "an agent-operable host for audio plugins",
+        "an agent-operable plugin host",
         font=caption,
         fill=MUTE,
         anchor="mm",

@@ -162,7 +162,7 @@ def main():
     d.text(at(left, 70), "plugshell", font=font(58), fill=INK, anchor="lm")
     d.text(
         at(left, 116),
-        "a host that lets an agent work an audio plugin",
+        "an agent-operable plugin host",
         font=font(26),
         fill=MUTE,
         anchor="lm",

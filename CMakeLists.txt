@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.22)
 
 project(plugshell
     VERSION 0.0.1
-    DESCRIPTION "An agent-operable host for audio plugins"
+    DESCRIPTION "An agent-operable plugin host"
     HOMEPAGE_URL "https://github.com/enkerewpo/plugshell"
     LANGUAGES C CXX)
 

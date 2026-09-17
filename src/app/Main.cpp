@@ -575,9 +575,9 @@ public:
 
     AboutContent()
     {
-        blurb.setText("A macOS host for audio plugins, built so that a program can work one: "
-                      "read its parameters, see its editor, and operate the controls that are not "
-                      "parameters.",
+        blurb.setText("An agent-operable VST3 plugin host: parameters, offline rendering, an image "
+                      "of the plugin's editor, and synthetic input into the controls that are "
+                      "not parameters.",
                       juce::dontSendNotification);
         blurb.setJustificationType(juce::Justification::topLeft);
         blurb.setColour(juce::Label::textColourId, theme::mute);
