@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 vstshell contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 plugshell contributors
 
 #include "core/PluginHost.h"
 
 #include <map>
 
-namespace vstshell
+namespace plugshell
 {
 
 namespace
@@ -117,4 +117,4 @@ bool PluginHost::setParameter(int pluginId, int index, float normalised)
     return true;
 }
 
-} // namespace vstshell
+} // namespace plugshell

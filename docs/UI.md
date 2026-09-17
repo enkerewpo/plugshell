@@ -1,12 +1,12 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
 # Interface
 
-![vstshell interface](../assets/ui-mockup.png)
+![plugshell interface](../assets/ui-mockup.png)
 
 ## Principle
 
-**vstshell owns one strip.** Everything else on screen belongs to the plugin.
+**plugshell owns one strip.** Everything else on screen belongs to the plugin.
 
 A host that wraps a plugin in its own chrome competes with the plugin's own
 interface for attention, and every pixel it spends is a pixel the plugin
@@ -14,7 +14,7 @@ designer wanted. It also makes capture harder: the region worth screenshotting
 is the plugin's editor, and a host that draws over or around it has to crop
 its own furniture back out.
 
-So the layout is deliberately unbalanced. The editor gets the window. vstshell
+So the layout is deliberately unbalanced. The editor gets the window. plugshell
 gets a horizontal bar along the bottom.
 
 ## Launch screen
@@ -35,7 +35,7 @@ attached will eventually be confused by their own window.
 
 ## Loaded
 
-The plugin's editor is embedded at its native size, unmodified. vstshell does
+The plugin's editor is embedded at its native size, unmodified. plugshell does
 not draw over it, rescale it, or reimplement any part of it. Capture and
 synthetic input both target exactly this region, which is also why nothing of
 ours may overlap it.

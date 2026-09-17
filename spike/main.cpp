@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 vstshell contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 plugshell contributors
 //
 // Phase-1 feasibility spike.
 //
@@ -18,10 +18,10 @@ int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::cout << "vstshell spike " << argc << " arg(s)\n";
+    std::cout << "plugshell spike " << argc << " arg(s)\n";
     (void) argv;
 
-    vstshell::PluginHost host;
+    plugshell::PluginHost host;
     const auto found = host.scan();
 
     std::cout << "discovered " << found.size() << " plugin(s)\n";

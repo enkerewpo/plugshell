@@ -1,8 +1,8 @@
-# vstshell
+# plugshell
 
 An agent-operable host for audio plugins.
 
-`vstshell` loads VST3 and Audio Unit plugins, exposes their parameters and presets over a machine-readable protocol, and — the part that does not exist today — lets a program **see** the plugin's editor and **operate the controls that are not exposed as parameters**, the way a human would.
+`plugshell` loads VST3 and Audio Unit plugins, exposes their parameters and presets over a machine-readable protocol, and — the part that does not exist today — lets a program **see** the plugin's editor and **operate the controls that are not exposed as parameters**, the way a human would.
 
 It runs two ways: as a standalone macOS application for studying a plugin on its own, and as a plugin itself, so the same interface is available inside a DAW with real signal flowing through it.
 
@@ -20,7 +20,7 @@ Two things are hard to do with an audio plugin today.
 
 These two gaps have the same consequence: an automated agent — a language model with tool access, a test harness, a batch analysis script — can adjust the numbers a plugin chooses to publish, and is blind and powerless for everything else.
 
-`vstshell` closes both gaps. It gives a calling program the plugin's parameters, its presets, a rendered image of its editor, and the ability to click and drag inside that editor. What a person can do with a plugin, a program can do.
+`plugshell` closes both gaps. It gives a calling program the plugin's parameters, its presets, a rendered image of its editor, and the ability to click and drag inside that editor. What a person can do with a plugin, a program can do.
 
 ### What this makes possible
 
@@ -43,7 +43,7 @@ Plugin hosting is well-trodden. Programmatic hosting is less so. Agent-facing ho
 | [Carla](https://github.com/falkTX/Carla) | yes | yes | yes | yes | no | no | no |
 | [VCV Host](https://vcvrack.com/Host) | yes | yes | — | yes | no | no | no |
 | [ableton-mcp-extended](https://github.com/uisato/ableton-mcp-extended) | via Live API | yes | — | no | no | no | yes (MCP) |
-| **vstshell** | yes | yes | yes, incl. factory banks | yes, **non-blocking** | yes | yes | yes (MCP) |
+| **plugshell** | yes | yes | yes, incl. factory banks | yes, **non-blocking** | yes | yes | yes (MCP) |
 
 **DawDreamer is the closest prior work** and the most useful reference. It has a complete parameter API, loads `.fxp` and `.vstpreset` files, saves and restores plugin state, and can open a plugin's editor. Its editor call is documented as blocking — it "will pause Python execution until you close the editor window" — because it is designed for a human to make an adjustment mid-script. That is the right design for its purpose and the wrong one for an automated caller, which needs the window open, observable, and driveable while it keeps working.
 
@@ -72,11 +72,11 @@ Stated plainly: parameter-level plugin hosting is solved. This project adds the 
     |
     |  MCP over stdio
     v
-  vstshell-mcp        thin protocol adapter
+  plugshell-mcp        thin protocol adapter
     |
     |  JSON-RPC over local WebSocket
     v
-  vstshell-core       C++ / JUCE
+  plugshell-core       C++ / JUCE
     |
     +-- plugin loading         AudioPluginFormatManager (VST3 + AU)
     +-- parameters            AudioProcessorParameter
@@ -85,13 +85,13 @@ Stated plainly: parameter-level plugin hosting is solved. This project adds the 
     +-- audio                 offline render and realtime device I/O
 ```
 
-`vstshell-core` builds into three products from one codebase:
+`plugshell-core` builds into three products from one codebase:
 
 | Product | Use |
 |---|---|
-| `VSTShell.app` | Standalone. Study a plugin with no DAW running. |
-| `VSTShell.vst3` | Loaded in a DAW, hosts a child plugin, same protocol. |
-| `VSTShell.component` | Audio Unit build of the same. |
+| `PlugShell.app` | Standalone. Study a plugin with no DAW running. |
+| `PlugShell.vst3` | Loaded in a DAW, hosts a child plugin, same protocol. |
+| `PlugShell.component` | Audio Unit build of the same. |
 
 The separate RPC layer exists because of the in-DAW product: a plugin cannot spawn its own agent process, so the agent connects inward. Using the same transport for the standalone app means a caller sees one interface in both modes.
 
@@ -165,9 +165,26 @@ macOS first, on Apple Silicon. The core is written to stay portable: JUCE handle
 
 ## License
 
-**GPL-3.0.** This is not a preference. JUCE and the Steinberg VST3 SDK are both dual-licensed as GPLv3 or commercial, so a project that links against them and is distributed publicly is GPLv3. Contributions are accepted on that basis.
+**AGPL-3.0-or-later.**
 
-VST is a trademark of Steinberg Media Technologies GmbH. This project is not affiliated with or endorsed by Steinberg, Spotify, Arturia, Xfer Records, or FabFilter.
+This follows from JUCE, not from preference. The JUCE Framework modules are dual-licensed under AGPLv3 and a commercial licence; using them under the open-source option makes the combined work AGPLv3. The Affero clause is not incidental here — this project runs a local RPC endpoint that agents connect to, which is exactly the network-interaction case AGPL covers.
+
+The Steinberg VST3 SDK no longer constrains this. Since version 3.8 it is [MIT-licensed](https://steinbergmedia.github.io/vst3_dev_portal/pages/VST+3+Licensing/VST3+License.html), with no fees, memberships or documents to sign.
+
+Contributions are accepted under AGPL-3.0-or-later.
+
+### Trademarks
+
+VST® is a registered trademark of Steinberg Media Technologies GmbH.
+
+plugshell hosts plugins in the VST 3 format. The name deliberately does not
+incorporate the VST mark: Steinberg's usage guidelines permit "VST" in plain
+text to state compatibility, and prohibit merging it into a product brand or
+forming blends and derivatives from it.
+
+Audio Units is a trademark of Apple Inc. This project is not affiliated with
+or endorsed by Steinberg, Apple, or any plugin vendor named in this
+repository.
 
 ---
 
@@ -175,7 +192,7 @@ VST is a trademark of Steinberg Media Technologies GmbH. This project is not aff
 
 A preset today is an opaque binary blob written by one plugin and readable only by that plugin. It cannot be read, diffed, version-controlled, ported, or shared without redistributing the vendor's bytes.
 
-Because vstshell can observe and drive an editor, it can record **what was done** rather than **what resulted**: a readable, diffable sequence of parameter changes and UI operations that reproduces a patch from a named starting point.
+Because plugshell can observe and drive an editor, it can record **what was done** rather than **what resulted**: a readable, diffable sequence of parameter changes and UI operations that reproduces a patch from a named starting point.
 
 This is arguably the project's most useful contribution, and it carries a legal dimension that is worth stating rather than assuming. A list of parameter values is unlikely to attract copyright — facts are not copyrightable under *Feist*, functional elements are filtered out of software infringement analysis, and a compilation gets only thin protection in its selection and arrangement. The binding constraint is contractual: plugin EULAs commonly restrict redistribution of factory content, and reformatting someone's content does not launder it. The design therefore records what a user does rather than decompiling preset files, and deliberately ships no bulk extraction feature.
 
@@ -183,7 +200,7 @@ See [docs/UNIVERSAL_PRESET.md](docs/UNIVERSAL_PRESET.md) for the format sketch, 
 
 ## Interface
 
-vstshell owns one horizontal strip along the bottom of the window. Everything else belongs to the plugin, because a host that wraps a plugin in its own chrome competes with the plugin's interface and makes the editor harder to capture cleanly. See [docs/UI.md](docs/UI.md).
+plugshell owns one horizontal strip along the bottom of the window. Everything else belongs to the plugin, because a host that wraps a plugin in its own chrome competes with the plugin's interface and makes the editor harder to capture cleanly. See [docs/UI.md](docs/UI.md).
 
 ![interface](assets/ui-mockup.png)
 

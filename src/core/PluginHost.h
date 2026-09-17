@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 vstshell contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 plugshell contributors
 
 #pragma once
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace vstshell
+namespace plugshell
 {
 
 /** One discovered plugin on disk, before it is instantiated. */
@@ -65,4 +65,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginHost)
 };
 
-} // namespace vstshell
+} // namespace plugshell

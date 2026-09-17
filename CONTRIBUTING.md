@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
 # Contributing
 
@@ -22,11 +22,13 @@ that lands on an invalidated assumption is wasted.
 ## Requirements for a pull request
 
 - `make check` passes: formatting and SPDX headers
-- Every new source file starts with `// SPDX-License-Identifier: GPL-3.0-or-later`
+- Every new source file starts with `// SPDX-License-Identifier: AGPL-3.0-or-later`
 - Commits explain why, not only what
 - Claims about plugin behaviour say which plugin, which version, and which macOS
 
 ## Licence
 
-Contributions are accepted under GPL-3.0-or-later. This is forced by JUCE and
-the Steinberg VST3 SDK, which are both GPLv3-or-commercial.
+Contributions are accepted under AGPL-3.0-or-later. This follows from the JUCE
+Framework, whose modules are dual-licensed under AGPLv3 and a commercial
+licence. The Steinberg VST3 SDK has been MIT-licensed since version 3.8 and
+imposes no such requirement.

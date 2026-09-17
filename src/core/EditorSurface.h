@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2026 vstshell contributors
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 plugshell contributors
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace vstshell
+namespace plugshell
 {
 
 /**
@@ -54,4 +54,4 @@ public:
     virtual bool drag(juce::Point<int> from, juce::Point<int> to, InputStrategy& used) = 0;
 };
 
-} // namespace vstshell
+} // namespace plugshell

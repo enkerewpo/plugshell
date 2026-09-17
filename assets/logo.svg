@@ -1,6 +1,6 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <title>vstshell</title>
+  <title>plugshell</title>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#2b3350"/>
@@ -28,7 +28,7 @@
         stroke-linecap="round" stroke-linejoin="round"/>
   <circle cx="268" cy="232" r="13" fill="#7ee0a8"/>
 
-  <!-- the control bar: the one strip vstshell owns -->
+  <!-- the control bar: the one strip plugshell owns -->
   <rect x="140" y="330" width="232" height="26" rx="13" fill="#4da3ff" opacity="0.22"/>
   <rect x="140" y="330" width="96"  height="26" rx="13" fill="url(#beam)"/>
   <circle cx="163" cy="343" r="7" fill="#4da3ff"/>

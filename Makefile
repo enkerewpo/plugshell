@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Convenience wrapper around CMake. CMake remains the source of truth.
 
 BUILD_DIR ?= build
@@ -29,7 +29,7 @@ build: configure ## Build everything
 
 .PHONY: spike
 spike: build ## Build and run the phase-1 feasibility spike
-	$(BUILD_DIR)/spike/vstshell_spike
+	$(BUILD_DIR)/spike/plugshell_spike
 
 .PHONY: format
 format: ## Rewrite sources with clang-format

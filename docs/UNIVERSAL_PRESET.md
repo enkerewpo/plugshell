@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
 # Universal presets: distributing operations instead of binaries
 
@@ -18,7 +18,7 @@ This has consequences that everyone in the field lives with and few question:
 Distribute **what was done**, not **what resulted**.
 
 ```yaml
-format: vstshell-patch/1
+format: plugshell-patch/1
 target:
   plugin: Pigments
   vendor: Arturia
@@ -95,9 +95,9 @@ The distinction that matters is **where a patch came from**, not what format it 
 These are constraints on the software, not disclaimers.
 
 1. **Record what the user does.** The authoring path is "observe a session and write down the operations", not "read a preset file and decompile it".
-2. **No bulk extraction feature.** vstshell will not ship a "convert this preset library to patches" command. The capability to read a preset locally is legitimate and useful; industrialising it into a redistribution pipeline is not, and the absence of that button is a deliberate design decision.
+2. **No bulk extraction feature.** plugshell will not ship a "convert this preset library to patches" command. The capability to read a preset locally is legitimate and useful; industrialising it into a redistribution pipeline is not, and the absence of that button is a deliberate design decision.
 3. **Patches declare their origin.** A `from:` field states the starting point. `from: factory-init` is a named initial state, not vendor content. A patch that began from a factory preset must say so, and tooling should warn before sharing it.
-4. **The format specification is separate from this implementation.** The schema is intended to be reusable by anyone, under a permissive licence, independent of vstshell's GPL. A format that only one GPL tool can read is not a universal format.
+4. **The format specification is separate from this implementation.** The schema is intended to be reusable by anyone, under a permissive licence, independent of this implementation's AGPL. A format that only one copyleft tool can read is not a universal format.
 
 ### Sources
 

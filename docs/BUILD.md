@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 
 # Building
 
@@ -21,8 +21,8 @@ JUCE is vendored as a git submodule, so no system-wide install is needed.
 ## Build
 
 ```bash
-git clone --recurse-submodules https://github.com/enkerewpo/vstshell.git
-cd vstshell
+git clone --recurse-submodules https://github.com/enkerewpo/plugshell.git
+cd plugshell
 make build
 ```
 
