@@ -22,10 +22,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 # Shared with make-dmg.sh. Points, not pixels; the image is rendered at twice
 # this for the Retina half of the pair.
-WINDOW = (700, 520)
-APP_ICON = (185, 235)
-APPLICATIONS_ICON = (505, 235)
-NOTE_ICON = (612, 438)
+WINDOW = (700, 486)
+APP_ICON = (185, 202)
+APPLICATIONS_ICON = (505, 202)
+NOTE_ICON = (612, 404)
 
 # The application's light palette, not its dark one, and the reason is Finder.
 #
@@ -41,13 +41,18 @@ HAIR = (202, 202, 196)
 
 
 def font(size: int):
-    # SFNS is the system font, which is what the application itself draws with
-    # -- JUCE's default sans serif resolves to the same face. The fallbacks are
-    # for building somewhere it is not installed.
+    # Lucida Grande, because that is what the application draws with.
+    #
+    # Not by choice exactly: JUCE's default sans serif resolves, on macOS, to
+    # Lucida Grande -- the system font from before Yosemite, which is why the
+    # interface reads as an older Mac application than it is. Whether or not
+    # that stays the choice, the backdrop has to be whatever the window it
+    # installs is, so this follows juce_Fonts_mac.mm rather than guessing at
+    # the current system font.
     for path in (
+        "/System/Library/Fonts/LucidaGrande.ttc",
+        "/System/Library/Fonts/Supplemental/LucidaGrande.ttc",
         "/System/Library/Fonts/SFNS.ttf",
-        "/System/Library/Fonts/HelveticaNeue.ttc",
-        "/System/Library/Fonts/Helvetica.ttc",
     ):
         if Path(path).exists():
             try:
@@ -69,9 +74,9 @@ def draw(scale: int) -> Image.Image:
     caption = font(13 * scale)
     small = font(11 * scale)
 
-    d.text(at(WINDOW[0] / 2, 58), "plugshell", font=title, fill=INK, anchor="mm")
+    d.text(at(WINDOW[0] / 2, 48), "plugshell", font=title, fill=INK, anchor="mm")
     d.text(
-        at(WINDOW[0] / 2, 88),
+        at(WINDOW[0] / 2, 77),
         "an agent-operable host for audio plugins",
         font=caption,
         fill=MUTE,
@@ -105,7 +110,7 @@ def draw(scale: int) -> Image.Image:
 
     # Kept to the left of the note's icon, so no line runs underneath it.
     left = 52
-    d.line([at(left, 378), at(WINDOW[0] - left, 378)], fill=HAIR, width=1 * scale)
+    d.line([at(left, 346), at(WINDOW[0] - left, 346)], fill=HAIR, width=1 * scale)
 
     for i, line in enumerate(
         (
@@ -114,10 +119,10 @@ def draw(scale: int) -> Image.Image:
             "than a security property.",
         )
     ):
-        d.text(at(left, 406 + i * 19), line, font=small, fill=MUTE, anchor="lm")
+        d.text(at(left, 374 + i * 19), line, font=small, fill=MUTE, anchor="lm")
 
     d.text(
-        at(left, 478),
+        at(left, 446),
         "To allow it once:  System Settings > Privacy & Security > Open Anyway",
         font=caption,
         fill=INK,
