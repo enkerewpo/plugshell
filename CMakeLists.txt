@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 plugshell contributors
+# Copyright (C) 2026 wheatfox <wheatfox17@icloud.com>
 
 cmake_minimum_required(VERSION 3.22)
 
@@ -28,6 +28,7 @@ endif()
 add_subdirectory(external/JUCE)
 
 add_subdirectory(src)
+add_subdirectory(src/app)
 
 if(PLUGSHELL_BUILD_SPIKE)
     add_subdirectory(spike)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 plugshell contributors
+// Copyright (C) 2026 wheatfox <wheatfox17@icloud.com>
 //
 // Phase-1 feasibility spike.
 //

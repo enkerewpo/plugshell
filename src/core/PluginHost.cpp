@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 plugshell contributors
+// Copyright (C) 2026 wheatfox <wheatfox17@icloud.com>
 
 #include "core/PluginHost.h"
 
+#include <cstdio>
 #include <map>
 
 namespace plugshell
@@ -33,15 +34,35 @@ std::vector<PluginDescription> PluginHost::scan()
 
     for (auto* format : impl->formats.getFormats())
     {
+        // F1: scanning Audio Units in-process crashed the host on this
+        // machine, inside a vendor shell plugin whose Objective-C classes
+        // were already registered by another bundle. Until scanning moves
+        // out of process, restrict it to VST3. See docs/SPIKE.md.
+        if (format->getName() != "VST3")
+            continue;
+
+        std::fprintf(stderr, "[stage] format=%s\n", format->getName().toRawUTF8());
+        std::fflush(stderr);
+
         // TODO(phase-2): scanning is synchronous here, which is fine for a
         // CLI but must move to PluginDirectoryScanner once this is driven
         // over RPC, so a slow plugin cannot stall the caller.
+        std::fprintf(stderr, "[stage] enumerating search paths\n");
+        std::fflush(stderr);
         const auto paths = format->searchPathsForPlugins(format->getDefaultLocationsToSearch(),
                                                          /*recursive=*/true,
                                                          /*allowAsync=*/false);
 
+        std::fprintf(stderr, "[stage] %d path(s) found\n", paths.size());
+        std::fflush(stderr);
+
         for (const auto& path : paths)
         {
+            // Progress is flushed before each file so that a crash identifies
+            // the plugin that caused it. See docs/SPIKE.md finding F1.
+            std::fprintf(stderr, "[scan] %s\n", path.toRawUTF8());
+            std::fflush(stderr);
+
             juce::OwnedArray<juce::PluginDescription> found;
             impl->known.scanAndAddFile(path, /*dontRescanIfAlreadyInList=*/true, found, *format);
 
