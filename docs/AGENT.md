@@ -86,6 +86,55 @@ echo '{"op":"params","search":"Cutoff","limit":5}' | nc 127.0.0.1 8767
 directly, so a plugin that only repaints its editor on a gesture does not take
 the change and carry on drawing the old position.
 
+### Audio
+
+| op | takes | gives |
+|---|---|---|
+| `render` | `path`, `durationSec`, `note`, `velocity`, `noteOffSec`, `sampleRate`, `blockSize`, `input` | frames written, `peak`, `rms`, and how long it took |
+| `note` | `note`, `velocity`, `durationMs`, `on`, `allOff` | what was sent |
+| `transport` | `bpm`, `numerator`, `denominator`, `playing`, `rewind` | the tempo, metre and position now |
+| `output` | `gain` or `db` | the master gain, and the current output levels |
+
+There are two ways to make a plugin produce sound, and they answer different
+questions.
+
+`render` is offline: the device is detached, the plugin is driven as fast as
+the machine allows, and the result is a file. It is the one to use for
+measuring, because nothing about it depends on wall-clock time or on an audio
+device existing. It reports `peak` and `rms` so that a render which came out
+silent is reported as silent rather than as a successful write of nothing.
+
+`note` plays through the audio device, in real time, and returns immediately.
+With `durationMs` the note releases itself; without one it stays down until
+`{"op":"note","note":60,"on":false}` or `{"op":"note","allOff":true}`. Use it
+when the thing being tested is the live path -- the meter, the analysers, a
+plugin's response to being played while its editor is watched.
+
+`allOff` sends All Notes Off and All Sound Off on every channel, not just
+note-offs for what this host is tracking, so it also stops a latched
+arpeggiator or a sequencer the plugin is running by itself.
+
+`output` is the master fader, applied after the plugin and before the device.
+It does not affect `render`, which reports the plugin's own output: a
+measurement that moved because someone had turned the monitors down would be
+worse than useless. Levels come back whether or not anything was set, so it
+doubles as a level read:
+
+```sh
+echo '{"op":"note","note":60,"velocity":0.9}' | nc 127.0.0.1 8767
+sleep 1
+echo '{"op":"output"}' | nc 127.0.0.1 8767
+#   {"peakDb": -14.14, "rmsL": 0.1337, "clipped": false, ...}
+```
+
+`peak` holds and decays over about 1.7 s, and `rms` is integrated over 300 ms,
+so a reading taken immediately after a note-on describes the attack and one
+taken a second later describes the body.
+
+`transport` supplies the playhead a plugin reads for tempo. Without it,
+anything clock-synchronised has nothing to sync to, and plugins that assume
+120 BPM produce output that is wrong without reporting an error.
+
 ### The editor
 
 | op | takes | gives |

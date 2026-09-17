@@ -17,6 +17,7 @@
 #include "KeyMonitor.h"
 #include "KeyboardMap.h"
 #include "OfflineRender.h"
+#include "OutputMeter.h"
 #include "Overlay.h"
 #include "PluginIndex.h"
 #include "QwertyKeys.h"
@@ -279,6 +280,7 @@ public:
     std::function<void()> onScope;
     std::function<void()> onTransport;
     std::function<void(double bpm, int upper, int lower)> onTempo;
+    std::function<void(float)> onGain;
 
     ControlStrip()
     {
@@ -306,6 +308,14 @@ public:
                 onTempo(bpm, upper, lower);
         };
         addAndMakeVisible(tempo);
+
+        output.onGainChange = [this](float g)
+        {
+            if (onGain)
+                onGain(g);
+        };
+        addAndMakeVisible(output);
+
         back.onClick = [this]
         {
             if (onBack)
@@ -354,7 +364,7 @@ public:
         the Scope button with it, so the analyser became unreachable on any
         plugin with a narrow editor. Wrapping to a second row keeps every
         control present at every width, which is what a control strip is for. */
-    static int heightFor(int width) { return width < 720 ? rowHeight * 2 - 8 : rowHeight; }
+    static int heightFor(int width) { return width < 880 ? rowHeight * 2 - 8 : rowHeight; }
 
     void refreshColours()
     {
@@ -362,11 +372,19 @@ public:
             b->setColours(theme::ink, theme::mute, theme::hair);
 
         tempo.setColours(theme::ink, theme::mute, theme::hair);
+        output.setColours(theme::ink, theme::mute, theme::hair);
 
         repaint();
     }
 
     void showBack(bool b) { back.setVisible(b); }
+
+    /** The meter reads the tap directly rather than being pushed values: the
+        audio thread already publishes them, and a second copy on the message
+        thread would only be a slower version of the same numbers. */
+    void setOutputSource(const AnalyserTap* t) { output.setSource(t); }
+
+    void setGain(float linear) { output.setGain(linear); }
 
     void setScopeOpen(bool on) { scope.setToggled(on); }
 
@@ -417,7 +435,8 @@ public:
             for (const juce::Component* b :
                  {(const juce::Component*) &transport, (const juce::Component*) &tempo,
                   (const juce::Component*) &keys, (const juce::Component*) &scope,
-                  (const juce::Component*) &help, (const juce::Component*) &settings})
+                  (const juce::Component*) &help, (const juce::Component*) &settings,
+                  (const juce::Component*) &output})
                 if (b->isVisible())
                     leftmost = juce::jmin(leftmost, b->getX());
 
@@ -494,6 +513,13 @@ public:
         tempo.setBounds(buttons.removeFromRight(92).reduced(4, 0));
         transport.setBounds(buttons.removeFromRight(38).reduced(3, 0));
 
+        // Last in the row and so first to run out of room. It shrinks rather
+        // than disappearing, because it is not only a reading: it is the
+        // master volume, and a plugin with a narrow editor is not a reason to
+        // leave someone unable to turn the sound down.
+        output.setBounds(
+            buttons.removeFromRight(juce::jlimit(62, 140, buttons.getWidth() - 40)).reduced(4, 0));
+
         if (twoRows)
         {
             // Back goes up with the status rather than competing with four
@@ -514,6 +540,7 @@ private:
     StripButton back{"Back"}, keys{"keys off"}, scope{"Scope"}, help{"Help"}, settings{"Settings"},
         transport{{}};
     TempoField tempo;
+    OutputMeter output;
     juce::String status{"Select a plugin"}, right, rightMedium, rightShort, playedNotes, playedChord;
 };
 
@@ -690,6 +717,22 @@ public:
                 fitWindowToEditor();
         };
 
+        strip.setOutputSource(&tap);
+        strip.setGain(masterGain);
+        tap.setGain(masterGain);
+
+        strip.onGain = [this](float g)
+        {
+            masterGain = g;
+            tap.setGain(g);
+
+            // Written on change rather than only on quit. The level people
+            // want kept is the one they were listening at, and a host that
+            // crashes -- which is the failure this project is built around --
+            // is exactly the case where "on quit" never runs.
+            saveSettings();
+        };
+
         tap.setPlayHead(&playHead);
         startAudio();
         devices.addChangeListener(this);
@@ -775,6 +818,14 @@ public:
                     if (auto* top = getTopLevelComponent())
                         o.setProperty("windowBounds", top->getScreenBounds().toString());
                     o.setProperty("octave", octave);
+                    o.setProperty("masterGain", masterGain);
+
+                    const auto levels = tap.getLevels();
+                    o.setProperty("outputRmsL", levels.rms[0]);
+                    o.setProperty("outputRmsR", levels.rms[1]);
+                    o.setProperty("outputPeakL", levels.peak[0]);
+                    o.setProperty("outputPeakR", levels.peak[1]);
+                    o.setProperty("outputClipped", levels.clipped);
                     if (instance != nullptr)
                     {
                         o.setProperty("parameterCount", instance->getParameters().size());
@@ -842,6 +893,91 @@ public:
                     o.setProperty("denominator", playHead.getDenominator());
                     o.setProperty("playing", playHead.isPlaying());
                     o.setProperty("ppq", playHead.getPpq());
+                });
+        }
+
+        if (op == "note")
+        {
+            if (instance == nullptr)
+                return error("no plugin loaded");
+
+            if ((bool) request.getProperty("allOff", false))
+            {
+                allNotesOff();
+                return okWith([](juce::DynamicObject& o) { o.setProperty("allOff", true); });
+            }
+
+            const int note = juce::jlimit(0, 127, (int) request.getProperty("note", 60));
+            const float velocity =
+                juce::jlimit(0.0f, 1.0f, (float) (double) request.getProperty("velocity", 0.8));
+            const int durationMs = (int) request.getProperty("durationMs", 0);
+            const bool wantOn = (bool) request.getProperty("on", true);
+
+            if (!wantOn)
+            {
+                sendNoteOff(note);
+                return okWith([note](juce::DynamicObject& o) { o.setProperty("note", note); });
+            }
+
+            player.getMidiMessageCollector().addMessageToQueue(
+                juce::MidiMessage::noteOn(1, note, velocity).withTimeStamp(now()));
+
+            // A held note and a struck one are both wanted, and which is which
+            // is the caller's business: with no duration the note stays down
+            // until something turns it off, which is what a sustained probe
+            // needs, and with one it releases itself, which is what measuring
+            // a single hit needs without a second round trip timed by hand.
+            if (durationMs > 0)
+            {
+                const auto ref = juce::Component::SafePointer<MainComponent>(this);
+
+                juce::Timer::callAfterDelay(durationMs,
+                                            [ref, note]
+                                            {
+                                                if (ref != nullptr)
+                                                    ref->sendNoteOff(note);
+                                            });
+            }
+
+            return okWith(
+                [&](juce::DynamicObject& o)
+                {
+                    o.setProperty("note", note);
+                    o.setProperty("velocity", velocity);
+                    o.setProperty("durationMs", durationMs);
+                    o.setProperty("held", durationMs <= 0);
+                });
+        }
+
+        if (op == "output")
+        {
+            if (request.hasProperty("gain"))
+                setMasterGain((float) (double) request.getProperty("gain", 1.0));
+
+            // Decibels as well as a multiplier, because the number a caller
+            // has is usually the one it wants to change by, and doing the
+            // conversion here means it is done the same way every time.
+            if (request.hasProperty("db"))
+                setMasterGain(juce::Decibels::decibelsToGain((float) (double) request.getProperty("db", 0.0),
+                                                             OutputMeter::floorDb));
+
+            return okWith(
+                [this](juce::DynamicObject& o)
+                {
+                    const auto levels = tap.getLevels();
+
+                    o.setProperty("gain", masterGain);
+                    o.setProperty("db", juce::Decibels::gainToDecibels(masterGain, OutputMeter::floorDb));
+                    o.setProperty("rmsL", levels.rms[0]);
+                    o.setProperty("rmsR", levels.rms[1]);
+                    o.setProperty("peakL", levels.peak[0]);
+                    o.setProperty("peakR", levels.peak[1]);
+                    o.setProperty("peakDb",
+                                  juce::Decibels::gainToDecibels(juce::jmax(levels.peak[0], levels.peak[1]),
+                                                                 OutputMeter::floorDb));
+                    o.setProperty("clipped", levels.clipped);
+                    o.setProperty("note", "gain is post-plugin and pre-device; it does not affect "
+                                          "the render op, which reports the plugin's own output");
                 });
         }
 
@@ -1405,6 +1541,17 @@ public:
                                                                    : "Appearance: following macOS");
     }
 
+    /** The one place the level changes. The fader, the socket and a
+        restored setting all come through here, so the control and the audio
+        can never be showing different numbers. */
+    void setMasterGain(float linear)
+    {
+        masterGain = juce::jlimit(0.0f, OutputMeter::maxGain, linear);
+        tap.setGain(masterGain);
+        strip.setGain(masterGain);
+        saveSettings();
+    }
+
     juce::File settingsFile() const
     {
         // userApplicationDataDirectory is ~/Library on macOS, not
@@ -1430,6 +1577,9 @@ public:
         theme::mode = name == "light"  ? theme::Mode::light
                       : name == "auto" ? theme::Mode::automatic
                                        : theme::Mode::dark;
+
+        masterGain =
+            juce::jlimit(0.0f, OutputMeter::maxGain, (float) (double) parsed.getProperty("masterGain", 1.0));
     }
 
     void saveSettings() const
@@ -1438,6 +1588,7 @@ public:
         o->setProperty("theme", theme::mode == theme::Mode::dark    ? "dark"
                                 : theme::mode == theme::Mode::light ? "light"
                                                                     : "auto");
+        o->setProperty("masterGain", (double) masterGain);
 
         const auto file = settingsFile();
         file.getParentDirectory().createDirectory();
@@ -1641,7 +1792,7 @@ private:
         // accurate and asks the reader to hold a keyboard in their head and
         // check every letter against it.
         o->setContent(std::make_unique<KeyboardMap>(theme::base, theme::ink, theme::mute, theme::hair),
-                      KeyboardMap::preferredHeight);
+                      KeyboardMap::preferredHeight());
 
         o->setFooter("The computer keyboard is off by default: plugin editors want it too, for typing "
                      "values and searching presets.");
@@ -1937,6 +2088,22 @@ private:
         sounding.clear();
         heldCodes.clear();
         strip.setPlaying({}, {});
+
+        // Then the controller messages, for everything this host is not
+        // tracking. The map above holds notes struck from the computer
+        // keyboard; a note sent over the socket, or one the plugin started on
+        // its own -- an arpeggiator latched, a sequencer running -- is not in
+        // it, and before this those notes had no way to be stopped at all.
+        //
+        // Both messages, on every channel: All Notes Off releases them into
+        // their release stage, which a long pad can sustain for seconds, and
+        // All Sound Off is the one that means now.
+        for (int channel = 1; channel <= 16; ++channel)
+        {
+            auto& queue = player.getMidiMessageCollector();
+            queue.addMessageToQueue(juce::MidiMessage::allNotesOff(channel).withTimeStamp(now()));
+            queue.addMessageToQueue(juce::MidiMessage::allSoundOff(channel).withTimeStamp(now()));
+        }
     }
 
     static double now() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
@@ -2509,6 +2676,7 @@ private:
     juce::AudioDeviceManager devices;
     juce::AudioProcessorPlayer player;
     AnalyserTap tap{player};
+    float masterGain = 1.0f;
     /** A timer that is not the loading spinner's. */
     struct Watchdog : juce::Timer
     {

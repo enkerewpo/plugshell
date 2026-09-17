@@ -98,6 +98,11 @@ chord named — inversions, alterations and slash chords included.
 FFT resolutions, spectrogram, and a polar stereo plot with correlation.
 Available as an inline strip or over the full window.
 
+**Master output.** A fader and a two-channel meter in one control: RMS bars,
+peak marks that hold and decay, and a clip indication, with the level applied
+after the plugin and before the device. Offline rendering is deliberately
+unaffected by it.
+
 **Tempo and transport.** A playhead supplying tempo, time signature and
 position. Without one, tempo-synchronised delays, arpeggiators and LFOs have
 no reference; many plugins assume 120 BPM and produce output that is wrong
@@ -156,7 +161,7 @@ the output in the current patch, which a parameter list alone does not answer.
 |---|---|
 | Host | `state` `plugins` `load` `unload` `permissions` |
 | Parameters | `params` `set` `programs` `program` |
-| Audio | `render` `transport` |
+| Audio | `render` `note` `transport` `output` |
 | Editor | `capture` `move` `click` `drag` `scroll` |
 
 Full protocol, coordinate conventions, and the two capture methods:

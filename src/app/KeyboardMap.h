@@ -5,6 +5,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <iterator>
+
 #include "QwertyKeys.h"
 
 namespace plugshell
@@ -88,7 +90,42 @@ public:
     {
     }
 
-    static constexpr int preferredHeight = 300;
+    /** What each thing does, and what presses it. A paragraph explaining the
+        same facts is a paragraph nobody reads to find a key in.
+
+        Out here rather than inside paint() so that the panel's height can be
+        counted from it. It was a number kept by hand, and the first line added
+        after it was written fell off the bottom of the panel. */
+    struct Line
+    {
+        const char* what;
+        const char* press;
+    };
+
+    static constexpr Line lines[] = {
+        {"Keyboard as MIDI, on and off", "Cmd-K"},
+        {"Octave down / up", "\\   /"},
+        {"White keys", "filled caps above"},
+        {"Black keys", "outlined caps above"},
+        {"Load the plugin under the cursor", "double click"},
+        {"Unload and return to the list", "Back"},
+        {"Close a panel", "Cmd-W, or the cross"},
+        {"Analyser, in the strip / full size", "Scope / click the strip"},
+        {"Tempo transport, start and stop", "click 120 4/4"},
+        {"Tempo, change it", "drag 120 4/4, or click to type"},
+        {"Master volume", "drag the meter"},
+        {"Master volume, back to unity", "double click the meter"},
+        {"Master volume, small steps", "scroll the meter, or Shift-drag"},
+        {"Waveform view: free, triggered, cycle, envelope", "click the mode beside it"}};
+
+    static constexpr int keyHeight = 34;
+    static constexpr int keyGap = 3;
+    static constexpr int lineHeight = 19;
+    static constexpr int listGap = 10;
+
+    static constexpr int listHeight() { return listGap + lineHeight * (int) std::size(lines); }
+
+    static constexpr int preferredHeight() { return keyHeight * 4 + keyGap * 3 + listHeight(); }
 
     void paint(juce::Graphics& g) override
     {
@@ -105,9 +142,9 @@ public:
 
         auto area = getLocalBounds().reduced(2, 0);
 
-        const int gap = 3;
+        const int gap = keyGap;
         const float unit = (float) (area.getWidth() - gap * 13) / 14.5f;
-        const int keyH = juce::jmin(34, (area.getHeight() - 26 - gap * 3) / 4);
+        const int keyH = juce::jmin(keyHeight, (area.getHeight() - listHeight() - gap * 3) / 4);
 
         int y = area.getY();
 
@@ -127,25 +164,7 @@ public:
 
         y += 10;
 
-        // What each thing does, and what presses it. A paragraph explaining
-        // the same facts is a paragraph nobody reads to find a key in.
-        static const struct Line
-        {
-            const char* what;
-            const char* press;
-        } lines[] = {{"Keyboard as MIDI, on and off", "Cmd-K"},
-                     {"Octave down / up", "\\   /"},
-                     {"White keys", "filled caps above"},
-                     {"Black keys", "outlined caps above"},
-                     {"Load the plugin under the cursor", "double click"},
-                     {"Unload and return to the list", "Back"},
-                     {"Close a panel", "Cmd-W, or the cross"},
-                     {"Analyser, in the strip / full size", "Scope / click the strip"},
-                     {"Tempo transport, start and stop", "click 120 4/4"},
-                     {"Tempo, change it", "drag 120 4/4 up or down"},
-                     {"Waveform view: free, triggered, cycle, envelope", "click the mode beside it"}};
-
-        const int lineH = 19;
+        const int lineH = lineHeight;
 
         for (const auto& line : lines)
         {
