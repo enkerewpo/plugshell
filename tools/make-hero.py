@@ -3,59 +3,74 @@
 # Copyright (C) 2026 wheatfox <wheatfox17@icloud.com>
 """Composes the project's lead image.
 
-A screenshot on its own answers "what does it look like" and leaves the more
-important question untouched, which is what the thing is for. So the shot is
-framed by the two claims that distinguish it -- that a program can work the
-plugin, and that a patch can be a sequence of operations rather than a binary
-blob -- and by the marks of the agents it is built to be driven by.
+The screenshot is evidence, not the subject. What the image has to carry is
+the four things this does that nothing else does, at a size readable in a
+README's column -- which is narrow, and which is where every earlier version
+of this failed: type sized against a full-width preview reads as decoration
+once it has been scaled into a page.
+
+So the claims are the middle of the picture, and the window sits underneath at
+whatever size is left over.
 
 Usage:
-    tools/make-hero.py <screenshot.png> [out.png]
+    tools/make-hero.py <window-capture.png> [out.png]
+
+The capture wants to come from `screencapture -l <window id>`, which returns
+the window with its real rounded corners and transparency around them. A
+rectangle grabbed with -R has the desktop showing in those corners, and no
+shadow drawn behind it will ever line up.
 """
 
 import subprocess
 import sys
+from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
+LOGOS = ROOT / "assets" / "logos"
 
-SCALE = 2  # the whole thing is laid out in points and rendered at 2x
+SCALE = 2
 WIDTH = 1280
-PAD = 40
+PAD = 48
 
-BASE = (18, 18, 18)
-PANEL = (26, 26, 26)
-INK = (232, 232, 232)
-MUTE = (138, 138, 138)
-HAIR = (54, 54, 54)
-ACCENT = (110, 170, 230)
+# The application's light palette. Light rather than dark because this is read
+# inside a page, and a dark plate dropped into one announces itself as a
+# picture before it has said anything about the software.
+BASE = (244, 244, 243)
+CARD = (255, 255, 255)
+INK = (24, 24, 23)
+MUTE = (110, 110, 104)
+HAIR = (219, 219, 213)
+
+CLAUDE = "#D97757"  # Anthropic's own, from simple-icons' index
+OPENAI = "#000000"
 
 
 def font(size: int, path: str = "/System/Library/Fonts/LucidaGrande.ttc"):
-    # Lucida Grande, the same face the application draws with -- JUCE's default
-    # sans serif resolves to it on macOS. The image and the window it shows
-    # should read as one piece of work.
+    # The face the application draws with: JUCE's default sans resolves to
+    # Lucida Grande on macOS.
     try:
         return ImageFont.truetype(path, size * SCALE)
     except OSError:
         return ImageFont.load_default()
 
 
-def svg(path: Path, height: int, colour: str) -> Image.Image:
-    """An SVG recoloured and rasterised at the size it will be drawn.
+def svg(name: str, height: int, colour: str, stroke: bool = False) -> Image.Image:
+    """An SVG recoloured in the markup and rasterised at its drawn size.
 
-    Recoloured by rewriting the markup rather than by tinting the result: these
-    are single-colour marks, and tinting a rasterised one leaves the edges the
-    colour they started as.
+    Recoloured before rasterising rather than tinted after, because tinting a
+    raster leaves every antialiased edge the colour it started as.
     """
-    markup = path.read_text()
+    markup = (LOGOS / f"{name}.svg").read_text()
 
-    if "fill=" not in markup.split(">", 1)[0]:
-        markup = markup.replace("<svg", f'<svg fill="{colour}"', 1)
-    else:
+    if stroke:
+        markup = markup.replace('stroke="currentColor"', f'stroke="{colour}"')
+    elif 'fill="currentColor"' in markup:
         markup = markup.replace('fill="currentColor"', f'fill="{colour}"')
+    else:
+        markup = markup.replace("<svg", f'<svg fill="{colour}"', 1)
 
     out = subprocess.run(
         ["rsvg-convert", "-h", str(height * SCALE), "-f", "png"],
@@ -63,152 +78,142 @@ def svg(path: Path, height: int, colour: str) -> Image.Image:
         capture_output=True,
         check=True,
     )
-
-    from io import BytesIO
-
     return Image.open(BytesIO(out.stdout)).convert("RGBA")
 
 
-def shadowed(image: Image.Image, radius: int, spread: int, drop: int) -> Image.Image:
-    """The image on a transparent field, with a soft shadow beneath it.
+def shadowed(window: Image.Image, spread: int, drop: int) -> Image.Image:
+    """A soft shadow cast from the window's own silhouette.
 
-    A screenshot pasted flat onto a background reads as part of the background
-    -- a region of a picture rather than a window sitting in front of one. The
-    shadow is what says it is a window, and it is the cheapest way to say it.
+    From its alpha channel, not from a rounded rectangle guessed at. A window's
+    corner radius belongs to the system, and the moment a guess is a pixel out
+    the shadow shows along the curve -- which is exactly what it was doing.
     """
     pad = spread * 3
-    field = Image.new("RGBA", (image.width + pad * 2, image.height + pad * 2 + drop), (0, 0, 0, 0))
+    field = Image.new("RGBA", (window.width + pad * 2, window.height + pad * 2 + drop), (0, 0, 0, 0))
 
     cast = Image.new("RGBA", field.size, (0, 0, 0, 0))
-    ImageDraw.Draw(cast).rounded_rectangle(
-        [pad, pad + drop, pad + image.width, pad + drop + image.height], radius, fill=(0, 0, 0, 190)
-    )
+    cast.paste((0, 0, 0, 150), (pad, pad + drop), window.getchannel("A"))
     field.alpha_composite(cast.filter(ImageFilter.GaussianBlur(spread)))
 
-    rounded_image = rounded(image, radius)
-    field.alpha_composite(rounded_image, (pad, pad))
+    field.alpha_composite(window, (pad, pad))
     return field
-
-
-def rounded(image: Image.Image, radius: int) -> Image.Image:
-    mask = Image.new("L", image.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, image.size[0] - 1, image.size[1] - 1], radius, fill=255)
-    out = image.convert("RGBA")
-    out.putalpha(mask)
-    return out
 
 
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
 
-    shot = Image.open(sys.argv[1]).convert("RGB")
+    window = Image.open(sys.argv[1]).convert("RGBA")
     out_path = Path(sys.argv[2] if len(sys.argv) > 2 else ROOT / "assets" / "hero.png")
 
-    shot_w = WIDTH - PAD * 2
-    shot_h = round(shot.height * shot_w / shot.width)
-    shot = shot.resize((shot_w * SCALE, shot_h * SCALE), Image.LANCZOS)
+    header_h = 124
+    card_h = 140
+    agents_h = 76
+    shot_w = 660
 
-    header = 116
-    footer = 132
-    height = header + shot_h + footer
+    shot_h = round(window.height * shot_w / window.width)
+    height = header_h + card_h + agents_h + shot_h + 40
 
-    # Transparent, so the image sits on whatever the page behind it is rather
-    # than punching a dark rectangle into a light one. Everything drawn on it
-    # therefore has to carry its own contrast: the text sits on panels, not on
-    # an assumption about what is underneath.
-    canvas = Image.new("RGBA", (WIDTH * SCALE, height * SCALE), (0, 0, 0, 0))
+    canvas = Image.new("RGB", (WIDTH * SCALE, height * SCALE), BASE)
     d = ImageDraw.Draw(canvas)
 
     def at(x, y):
         return (round(x * SCALE), round(y * SCALE))
 
-    def panel(x, y, w, h, radius=10):
-        plate = Image.new("RGBA", (round(w * SCALE), round(h * SCALE)), (0, 0, 0, 0))
-        ImageDraw.Draw(plate).rounded_rectangle(
-            [0, 0, plate.width - 1, plate.height - 1], radius * SCALE, fill=(24, 24, 24, 246)
-        )
-        canvas.alpha_composite(plate, at(x, y))
+    # ------------------------------------------------------------ the name
 
-    # ---------------------------------------------------------- the header
-
-    panel(0, 0, WIDTH, 92, 14)
-
-    mark_size = 56
     mark = Image.open(ROOT / "assets" / "icon-1024.png").convert("RGBA")
-    mark = mark.resize((mark_size * SCALE, mark_size * SCALE), Image.LANCZOS)
-    canvas.alpha_composite(mark, at(PAD - 4, 18))
+    mark = mark.resize((68 * SCALE, 68 * SCALE), Image.LANCZOS)
+    canvas.paste(mark, at(PAD, 26), mark)
 
-    left = PAD + mark_size + 14
+    left = PAD + 68 + 20
 
-    d.text(at(left, 36), "plugshell", font=font(34), fill=INK, anchor="lm")
+    d.text(at(left, 48), "plugshell", font=font(42), fill=INK, anchor="lm")
     d.text(
-        at(left, 68),
+        at(left, 84),
         "a host that lets a program work an audio plugin",
-        font=font(16),
+        font=font(20),
         fill=MUTE,
         anchor="lm",
     )
 
-    # The agents it is built for, at a size that reads at a glance -- which is
-    # the only size worth drawing a logo at.
-    logo_h = 30
-    claude = svg(ROOT / "assets" / "logos" / "claude.svg", logo_h, "#e8e8e8")
-    openai = svg(ROOT / "assets" / "logos" / "openai.svg", logo_h, "#e8e8e8")
-
-    right = WIDTH - PAD
-    label = font(16)
-
-    for logo, name in ((openai, "Codex"), (claude, "Claude Code")):
-        width = d.textlength(name, font=label) / SCALE
-        d.text(at(right, 46), name, font=label, fill=INK, anchor="rm")
-        right -= width + 12
-
-        canvas.alpha_composite(logo, (round(right * SCALE - logo.width), round(46 * SCALE - logo.height / 2)))
-        right -= logo.width / SCALE + 30
-
-    d.text(at(right, 46), "driven by", font=font(15), fill=MUTE, anchor="rm")
-
-    # ------------------------------------------------------ the screenshot
-
-    framed = shadowed(shot, 10 * SCALE, 16 * SCALE, 10 * SCALE)
-    canvas.alpha_composite(
-        framed, (PAD * SCALE - (framed.width - shot.width) // 2, header * SCALE - 16 * SCALE * 3)
-    )
-
     # ---------------------------------------------------------- the claims
     #
-    # Each on its own plate, because four labels floating on a transparent
-    # field are four labels nobody can read against an unknown background.
+    # The middle of the picture, and the reason it exists. Marked with an icon
+    # rather than a coloured rule down one side: the rule decorates without
+    # saying anything, and says mostly that a template was used.
 
     claims = [
-        ("agent control", "parameters, presets and\nthe editor, over a socket"),
-        ("editor capture", "the plugin's own\ninterface, as an image"),
-        ("synthetic input", "click and drag what\nis not a parameter"),
-        ("universal preset", "a patch as operations,\nnot a binary blob"),
+        ("terminal", "agent control", "parameters, presets and\nthe editor, over a socket"),
+        ("camera", "editor capture", "the plugin's own\ninterface, as an image"),
+        ("mouse-pointer-click", "synthetic input", "click and drag what the\nplugin never published"),
+        ("list-ordered", "universal preset", "a patch as operations,\nnot a binary blob"),
     ]
 
-    gap = 14
-    plate_w = (WIDTH - PAD * 2 - gap * (len(claims) - 1)) / len(claims)
-    plate_h = 96
-    top = header + shot_h + 16
+    gap = 16
+    card_w = (WIDTH - PAD * 2 - gap * (len(claims) - 1)) / len(claims)
+    top = header_h
 
-    for i, (name, note) in enumerate(claims):
-        x = PAD + (plate_w + gap) * i
-        panel(x, top, plate_w, plate_h)
+    for i, (icon, name, note) in enumerate(claims):
+        x = PAD + (card_w + gap) * i
 
         d.rounded_rectangle(
-            [at(x + 16, top + 20), at(x + 20, top + plate_h - 20)], 2 * SCALE, fill=ACCENT
+            [at(x, top), at(x + card_w, top + card_h)], 12 * SCALE, fill=CARD, outline=HAIR, width=SCALE
         )
 
-        d.text(at(x + 30, top + 30), name, font=font(17), fill=INK, anchor="lm")
+        glyph = svg(icon, 26, "#1a1a19", stroke=True)
+        canvas.paste(glyph, at(x + 24, top + 22), glyph)
+
+        d.text(at(x + 24, top + 76), name, font=font(21), fill=INK, anchor="lm")
         d.multiline_text(
-            at(x + 30, top + 52), note, font=font(12), fill=MUTE, spacing=6 * SCALE, anchor="la"
+            at(x + 24, top + 94), note, font=font(14), fill=MUTE, spacing=7 * SCALE, anchor="la"
         )
+
+    # ---------------------------------------------------------- the agents
+    #
+    # In their own colours. A brand mark recoloured to suit a layout stops
+    # being the mark anyone recognises, which is the whole reason to show one.
+
+    y = header_h + card_h + agents_h / 2 + 8
+    logo_h = 32
+    label = font(20)
+
+    pieces = [("claude", CLAUDE, "Claude Code"), ("openai", OPENAI, "Codex")]
+
+    total = d.textlength("driven by", font=label) / SCALE + 22
+    for _, _, name in pieces:
+        total += logo_h + 12 + d.textlength(name, font=label) / SCALE + 46
+    total -= 46
+
+    x = (WIDTH - total) / 2
+    d.text(at(x, y), "driven by", font=label, fill=MUTE, anchor="lm")
+    x += d.textlength("driven by", font=label) / SCALE + 22
+
+    for icon, colour, name in pieces:
+        logo = svg(icon, logo_h, colour)
+        canvas.paste(logo, at(x, y - logo_h / 2), logo)
+        x += logo_h + 12
+
+        d.text(at(x, y), name, font=label, fill=INK, anchor="lm")
+        x += d.textlength(name, font=label) / SCALE + 46
+
+    # ------------------------------------------------- the window, as proof
+
+    shot = window.resize((shot_w * SCALE, shot_h * SCALE), Image.LANCZOS)
+    framed = shadowed(shot, 18 * SCALE, 12 * SCALE)
+
+    canvas.paste(
+        framed,
+        (
+            (WIDTH * SCALE - framed.width) // 2,
+            round((header_h + card_h + agents_h) * SCALE) - 18 * SCALE * 3 + 12 * SCALE,
+        ),
+        framed,
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out_path)
-    print(f"wrote {out_path}  {canvas.size[0]}x{canvas.size[1]}  (transparent)")
+    print(f"wrote {out_path}  {canvas.size[0]}x{canvas.size[1]}")
 
 
 if __name__ == "__main__":
