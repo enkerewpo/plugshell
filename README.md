@@ -1,12 +1,14 @@
 # plugshell
 
+![plugshell](assets/hero.webp)
+
 An agent-operable host for audio plugins.
 
 `plugshell` loads VST3 and Audio Unit plugins, exposes their parameters and presets over a machine-readable protocol, and — the part that does not exist today — lets a program **see** the plugin's editor and **operate the controls that are not exposed as parameters**, the way a human would.
 
 It runs two ways: as a standalone macOS application for studying a plugin on its own, and as a plugin itself, so the same interface is available inside a DAW with real signal flowing through it.
 
-> **Status: design stage.** Nothing is implemented yet. This document states the problem, surveys what already exists, and describes the intended design. The first milestone is a feasibility spike (see [Roadmap](#roadmap)), because two of the mechanisms this project depends on are not guaranteed to work and should be tested before anything is built on top of them.
+> **Status: early, and it runs.** The macOS application loads VST3 plugins, hosts their editors, plays them from the computer keyboard, and shows what the output looks like. The parts that make it agent-operable — editor capture, synthetic input, the RPC surface — are not built yet, and one of them is still unproven. See [Roadmap](#roadmap).
 
 ---
 
@@ -109,100 +111,21 @@ Everything else here is ordinary engineering. These two are not, and the project
 
 Both are per-plugin behaviours, not per-platform ones. The spike therefore tests against three plugins chosen for different rendering strategies rather than trying to reason about it in the abstract.
 
-### Interface sketch
+### Interface
 
-Provisional, expected to change once the spike reports back.
+plugshell owns one horizontal strip along the bottom of the window. Everything else belongs to the plugin, because a host that wraps a plugin in its own chrome competes with the plugin's interface and makes the editor harder to capture cleanly. The window sizes itself to the editor and follows it when a plugin resizes its own.
 
-```
-load_plugin(path)                      -> plugin_id, format, io layout
-list_parameters(plugin_id)             -> name, index, value, text, range
-set_parameter(plugin_id, index, value)
-list_presets(plugin_id)                -> factory banks and programs
-load_preset(plugin_id, ref)
-open_editor(plugin_id)                 -> non-blocking; size
-screenshot(plugin_id)                  -> PNG
-click(plugin_id, x, y, button)
-drag(plugin_id, from, to, button)
-key(plugin_id, keycode, modifiers)
-render(plugin_id, midi, seconds)       -> audio buffer
-get_state / set_state
-```
+The strip carries state, the computer-keyboard toggle with the note and chord being played, the scope, and help and settings. See [docs/UI.md](docs/UI.md).
 
-Coordinates are editor-local, so a caller works from what the screenshot shows.
+![hosting Arturia Pigments](assets/editor.webp)
 
----
+## What works today
 
-## Roadmap
-
-| Phase | Work | Exit condition |
-|---|---|---|
-| 0 | CMake, JUCE, VST3 SDK, build skeleton | Builds on macOS arm64 |
-| **1** | **Feasibility spike** | Capture and input verified, or refuted, against three plugins |
-
-Phase 1 has already produced one finding that changes the design: scanning installed plugins in-process crashes the host, because it loads arbitrary third-party binaries into a single address space. See [docs/SPIKE.md](docs/SPIKE.md), finding F1. Whether plugin *instances* must also be hosted out of process — and whether editor capture and input survive a process boundary — is now an open design question rather than an assumption.
-| 2 | Core: loading, parameters, presets, state | Usable from a CLI |
-| 3 | RPC and MCP adapter | An agent completes a real sound-design task |
-| 4 | Packaging | Signed `.app` |
-| 5 | Plugin builds | Works inside a DAW on live signal |
-
-Phase 1 is deliberately placed before anything is built on top. Its output is a report on whether editor capture and event injection work, per plugin, with whatever fallbacks were needed. If neither mechanism can be made to work, that finding is worth publishing on its own and the project stops there rather than after phase 4.
-
-### Spike targets
-
-Chosen for different rendering strategies, not for popularity:
-
-- **Arturia Pigments** — multi-engine synth, visually rich, likely GPU-rendered
-- **Xfer Serum 2** — wavetable synth with a custom renderer
-- **FabFilter Pro-Q 4** — interactive curve display, unusual interaction model
-
----
-
-## Platform support
-
-macOS first, on Apple Silicon. The core is written to stay portable: JUCE handles VST3 on Windows and Linux, and capture and event injection are isolated behind a platform interface precisely because they are the parts that will need reimplementing. Audio Units are macOS-only by definition.
-
----
-
-## License
-
-**AGPL-3.0-or-later.**
-
-This follows from JUCE, not from preference. The JUCE Framework modules are dual-licensed under AGPLv3 and a commercial licence; using them under the open-source option makes the combined work AGPLv3. The Affero clause is not incidental here — this project runs a local RPC endpoint that agents connect to, which is exactly the network-interaction case AGPL covers.
-
-The Steinberg VST3 SDK no longer constrains this. Since version 3.8 it is [MIT-licensed](https://steinbergmedia.github.io/vst3_dev_portal/pages/VST+3+Licensing/VST3+License.html), with no fees, memberships or documents to sign.
-
-Contributions are accepted under AGPL-3.0-or-later.
-
-### Trademarks
-
-VST® is a registered trademark of Steinberg Media Technologies GmbH.
-
-plugshell hosts plugins in the VST 3 format. The name deliberately does not
-incorporate the VST mark: Steinberg's usage guidelines permit "VST" in plain
-text to state compatibility, and prohibit merging it into a product brand or
-forming blends and derivatives from it.
-
-Audio Units is a trademark of Apple Inc. This project is not affiliated with
-or endorsed by Steinberg, Apple, or any plugin vendor named in this
-repository.
-
----
-
-## Universal presets
-
-A preset today is an opaque binary blob written by one plugin and readable only by that plugin. It cannot be read, diffed, version-controlled, ported, or shared without redistributing the vendor's bytes.
-
-Because plugshell can observe and drive an editor, it can record **what was done** rather than **what resulted**: a readable, diffable sequence of parameter changes and UI operations that reproduces a patch from a named starting point.
-
-This is arguably the project's most useful contribution, and it carries a legal dimension that is worth stating rather than assuming. A list of parameter values is unlikely to attract copyright — facts are not copyrightable under *Feist*, functional elements are filtered out of software infringement analysis, and a compilation gets only thin protection in its selection and arrangement. The binding constraint is contractual: plugin EULAs commonly restrict redistribution of factory content, and reformatting someone's content does not launder it. The design therefore records what a user does rather than decompiling preset files, and deliberately ships no bulk extraction feature.
-
-See [docs/UNIVERSAL_PRESET.md](docs/UNIVERSAL_PRESET.md) for the format sketch, the reasoning and the sources.
-
-## Interface
-
-plugshell owns one horizontal strip along the bottom of the window. Everything else belongs to the plugin, because a host that wraps a plugin in its own chrome competes with the plugin's interface and makes the editor harder to capture cleanly. See [docs/UI.md](docs/UI.md).
-
-![interface](assets/ui-mockup.png)
+- **Lists installed VST3 plugins without running any of them.** Enumerating plugins by loading them is what hosts normally do, and on the development machine it started vendor licensing servers, raised error dialogs, and killed the process. Indexing reads each bundle's `Info.plist` instead.
+- **Hosts the editor unmodified**, sizes the window to it, and follows it when the plugin resizes itself.
+- **Plays instruments from the computer keyboard**, two octaves, with the chord being played named in the strip. Watched at the platform event layer, because a plugin editor is a native view and takes keyboard focus away from the host the moment it is clicked.
+- **Audio out and every MIDI input**, with no input channel requested: on a Bluetooth headset opening the microphone switches the device to the hands-free profile.
+- **A waveform and spectrum panel** that slides out of the strip, for seeing what a parameter actually did.
 
 ## Documentation
 

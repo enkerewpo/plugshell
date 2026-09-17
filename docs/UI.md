@@ -2,7 +2,9 @@
 
 # Interface
 
-![plugshell interface](../assets/ui-mockup.png)
+![the plugin list](../assets/hero.webp)
+
+![an editor hosted unmodified](../assets/editor.webp)
 
 ## Principle
 
