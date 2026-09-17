@@ -1,35 +1,37 @@
+<p align="center"><img src="assets/hero.webp" alt="plugshell hosting Arturia Pigments with its four analysers open" width="100%"></p>
+
 # plugshell
 
-![plugshell](assets/hero.webp)
+**A macOS host that lets a program work an audio plugin.**
 
-An agent-operable host for audio plugins.
+Not only read its parameters — see its editor, click the controls that are not
+parameters, render it to audio, and describe a patch as a sequence of
+operations rather than an opaque binary blob.
 
-`plugshell` loads VST3 and Audio Unit plugins, exposes their parameters and presets over a machine-readable protocol, and — the part that does not exist today — lets a program **see** the plugin's editor and **operate the controls that are not exposed as parameters**, the way a human would.
-
-It runs two ways: as a standalone macOS application for studying a plugin on its own, and as a plugin itself, so the same interface is available inside a DAW with real signal flowing through it.
-
-> **Status: early, and it runs.** The macOS application loads VST3 plugins, hosts their editors, plays them from the computer keyboard, and shows what the output looks like. **Editor capture and an agent RPC surface are in.** Capture is verified against Pigments and Analog Lab V at full Retina resolution. Synthetic input is implemented but not yet confirmed to reach a plugin, because both capture and input need macOS permissions (Screen Recording and Accessibility) that the app now asks for in Settings. See [Roadmap](#roadmap).
+> **Status: early, and it runs.** Everything under [What works](#what-works) is
+> built and has been used. Everything under [Roadmap](#roadmap) has not.
 
 ---
 
-## Installing
+## Quickstart
 
-### From a release
+### Install
 
-Download the disk image, drag `plugshell.app` onto Applications, and open it.
+Download the disk image from
+[Releases](https://github.com/enkerewpo/plugshell/releases), drag
+`plugshell.app` onto Applications, and open it.
 
-**The first launch is blocked.** macOS says it cannot verify the developer,
-because the application is not signed with an Apple Developer ID — a paid
-membership, not a security property. To allow it:
+**The first launch is blocked.** macOS cannot verify an application that is not
+signed with an Apple Developer ID — a paid membership rather than a security
+property. To allow it, once:
 
-> **System Settings > Privacy & Security**, scroll down to the message about
-> plugshell, click **Open Anyway**, and confirm.
+> **System Settings → Privacy & Security**, scroll down to the message about
+> plugshell, click **Open Anyway**, confirm.
 
-That is one time. It opens normally afterwards. The older Control-click > Open
-shortcut was removed in a recent macOS and no longer works, so ignore any
-instructions that mention it.
+The Control-click → Open shortcut older instructions mention was removed from
+macOS and no longer works.
 
-### From source
+### Or build it
 
 No Gatekeeper step, because nothing was downloaded:
 
@@ -37,9 +39,11 @@ No Gatekeeper step, because nothing was downloaded:
 git clone https://github.com/enkerewpo/plugshell.git
 cd plugshell
 make deps && make build
+open build/src/app/plugshell_app_artefacts/RelWithDebInfo/plugshell.app
 ```
 
-Needs the Xcode command line tools, CMake and Ninja. See [docs/BUILD.md](docs/BUILD.md).
+Needs the Xcode command line tools, CMake and Ninja. See
+[docs/BUILD.md](docs/BUILD.md).
 
 ### Permissions
 
@@ -51,141 +55,219 @@ operation reports success and nothing happens:
 | Screen Recording | reading a plugin's editor as an image |
 | Accessibility | clicking and dragging inside that editor |
 
-plugshell's Settings panel has a row for each showing whether it is granted.
-Everything else — loading plugins, parameters, the keyboard, the analyser —
-works without them.
+**Settings** has a row for each showing whether it is granted. Everything else —
+loading plugins, parameters, the keyboard, the analysers, offline rendering —
+works without them. macOS applies Screen Recording only at launch, so quit and
+reopen after allowing it.
 
 ---
 
-## Motivation
+## What works
 
-Two things are hard to do with an audio plugin today.
+**Hosts VST3 plugins and their editors, without blocking.** The window stays
+open, observable and driveable while the calling program keeps working — which
+is where every programmatic host before it stops. It follows the plugin's own
+size, including when the plugin resizes itself, and scrolls an editor larger
+than the display rather than clipping it.
 
-**The first is automation beyond the parameter list.** A plugin publishes a set of automatable parameters, and every host can read and write those. But a plugin's editor routinely contains controls that are not in that list: wavetable selection, modulation routings drawn by dragging one control onto another, preset browsers, matrix cells, oscilloscope zoom, anything the developer chose not to expose. If a control is not a parameter, no host can touch it, and any workflow that needs it stops being programmable.
+**Reads and writes parameters.** Paged and searchable, because the counts are
+larger than they look: Pigments publishes 4446, and the question a caller
+actually has is "which one is the filter cutoff".
 
-**The second is that a program cannot see the plugin.** Parameter values are numbers without context. Knowing that `osc1_wt_pos = 0.42` says nothing about what the wavetable looks like at that position, whether the filter curve on screen is doing what you intended, or what the modulation matrix currently routes where. The information a person uses to work with a plugin is mostly visual, and none of it is available programmatically.
+**Captures the editor as an image**, through the window server, so it works for
+editors drawn by the GPU — which is most modern synths. This is the part no
+other host does, and it is what makes a plugin's own interface available to a
+program at all.
 
-These two gaps have the same consequence: an automated agent — a language model with tool access, a test harness, a batch analysis script — can adjust the numbers a plugin chooses to publish, and is blind and powerless for everything else.
+**Puts synthetic input into the editor.** Clicks, drags and scrolls in the
+editor's own coordinates: the escape hatch for every control a plugin chose not
+to publish — wavetable selectors, modulation matrices drawn by dragging, preset
+browsers.
 
-`plugshell` closes both gaps. It gives a calling program the plugin's parameters, its presets, a rendered image of its editor, and the ability to click and drag inside that editor. What a person can do with a plugin, a program can do.
+**Renders offline, faster than real time.** Two seconds of Pigments in 53
+milliseconds. A parameter vector in, audio out, no device and no waiting.
 
-### What this makes possible
+**Plays from the computer keyboard**, two octaves in the tracker layout, naming
+the chord as you hold it — inversions, alterations and slash chords included.
 
-- **Assisted sound design.** An agent can open a synth, look at the editor, change a control, listen to the result, and iterate — including controls that are not parameters.
-- **Plugin study and documentation.** Enumerate a plugin's factory banks, load each preset, capture the editor, and build a searchable catalogue of what a library actually contains.
-- **Regression testing for plugin developers.** Drive the editor, capture it, and diff the image across builds.
-- **Reproducible experiments.** Describe a patch as a sequence of operations rather than an opaque binary state blob.
-- **Accessibility.** Custom-drawn plugin editors are invisible to screen readers. A structured description of the editor is a starting point for changing that.
+**Shows what the output is doing**: waveform with oscilloscope triggering,
+spectrum at two FFT resolutions, spectrogram, and a polar stereo plot with
+correlation. In the strip as a glance, or over the whole window to study.
+
+**Provides a tempo and transport**, because a plugin without a playhead has to
+guess — and several guess 120 and carry on, which is worse than failing.
+
+---
+
+## Driving it from an agent
+
+```sh
+plugshell --serve                 # 127.0.0.1:8767
+```
+
+Newline-delimited JSON over a loopback socket, drivable from a shell. That is
+the point: the intended caller is a language model with a terminal, not an
+application compiled against a client library.
+
+```sh
+rpc() { printf '%s\n' "$1" | nc -w 5 127.0.0.1 8767; }
+
+rpc '{"op":"load","path":"/Library/Audio/Plug-Ins/VST3/Pigments.vst3"}'
+rpc '{"op":"params","search":"Cutoff","limit":5}'
+rpc '{"op":"set","index":546,"value":0.35}'
+rpc '{"op":"render","path":"/tmp/probe.wav","note":60,"durationSec":2}'
+rpc '{"op":"capture","path":"/tmp/editor.png"}'
+rpc '{"op":"drag","at":[0.65,0.13],"to":[0.65,0.30],"normalised":true}'
+```
+
+### With Claude Code
+
+Start the host, then ask for the work. Nothing to install on the agent's side —
+it already has a shell.
+
+```sh
+plugshell --load /Library/Audio/Plug-Ins/VST3/Pigments.vst3 --serve &
+claude
+```
+
+> Find the filter cutoff on port 8767, sweep it across its range rendering two
+> seconds at each step, and tell me where the sound stops getting brighter and
+> starts only getting quieter.
+
+`tools/sweep.py` is that pattern written down — set, render, measure, repeat —
+and a worked example to read before writing your own:
+
+```sh
+tools/sweep.py --param "F1 Cutoff"   # one control, in detail
+tools/sweep.py --survey              # every control, at its extremes
+```
+
+The survey answers something a parameter list cannot: of 4446 published
+parameters, which ones actually change the sound in this patch. That is the
+difference between a list and a map.
+
+### The surface
+
+| Area | Operations |
+|---|---|
+| Host | `state` `plugins` `load` `unload` `permissions` |
+| Parameters | `params` `set` `programs` `program` |
+| Audio | `render` `transport` |
+| Editor | `capture` `move` `click` `drag` `scroll` |
+
+Full protocol, the coordinate conventions, and why capture has two methods:
+[docs/AGENT.md](docs/AGENT.md).
+
+---
+
+## Why
+
+**A plugin publishes the controls it chose to publish.** Everything else —
+which wavetable is selected, what the modulation matrix routes where, which
+page of the editor is showing — exists only as pixels and only answers to a
+mouse. If a control is not a parameter, no host can touch it, and any workflow
+needing it stops being programmable.
+
+**And a parameter value is a number without context.** Knowing that
+`osc1_wt_pos = 0.42` says nothing about what the wavetable looks like there.
+What a person uses to work a plugin is mostly visual, and none of it has been
+available to a program.
+
+One consequence: an automated caller can adjust the numbers a plugin chooses to
+publish, and is blind and powerless for everything else.
+
+### What that makes possible
+
+- **Assisted sound design.** Open a synth, look at the editor, change a
+  control, listen, iterate — including controls that are not parameters.
+- **Measuring what a control does** — not what number it holds. Move it,
+  render, compare: [docs/TIMBRE_MODEL.md](docs/TIMBRE_MODEL.md).
+- **Patches as operations**, which can be read, diffed and reasoned about:
+  [docs/UNIVERSAL_PRESET.md](docs/UNIVERSAL_PRESET.md).
+- **Regression testing for plugin developers.** Drive the editor, capture it,
+  diff the image across builds.
+- **Accessibility.** Custom-drawn editors are invisible to screen readers; a
+  structured description of one is a starting point.
 
 ---
 
 ## Related work
 
-Plugin hosting is well-trodden. Programmatic hosting is less so. Agent-facing hosting with editor access does not appear to exist.
+Plugin hosting is well-trodden. Programmatic hosting is less so. Agent-facing
+hosting with editor access does not appear to exist.
 
-| Project | Loads VST3/AU | Parameters | Presets | Opens editor | Screenshot | Synthetic input | Agent protocol |
-|---|---|---|---|---|---|---|---|
-| [pedalboard](https://spotify.github.io/pedalboard/) (Spotify) | yes | yes | no | no | no | no | no |
-| [DawDreamer](http://dirt.design/DawDreamer/) | yes | yes | `.fxp`, `.vstpreset` | yes, **blocking** | no | no | no |
-| [Carla](https://github.com/falkTX/Carla) | yes | yes | yes | yes | no | no | no |
-| [VCV Host](https://vcvrack.com/Host) | yes | yes | — | yes | no | no | no |
-| [ableton-mcp-extended](https://github.com/uisato/ableton-mcp-extended) | via Live API | yes | — | no | no | no | yes (MCP) |
-| **plugshell** | yes | yes | yes, incl. factory banks | yes, **non-blocking** | yes | yes | yes (MCP) |
+| Project | Parameters | Presets | Opens editor | Screenshot | Synthetic input | Agent protocol |
+|---|---|---|---|---|---|---|
+| [pedalboard](https://spotify.github.io/pedalboard/) | yes | no | no | no | no | no |
+| [DawDreamer](http://dirt.design/DawDreamer/) | yes | `.fxp`, `.vstpreset` | yes, **blocking** | no | no | no |
+| [Carla](https://github.com/falkTX/Carla) | yes | yes | yes | no | no | no |
+| [ableton-mcp-extended](https://github.com/uisato/ableton-mcp-extended) | via Live API | — | no | no | no | yes |
+| **plugshell** | yes | yes | yes, **non-blocking** | **yes** | **yes** | yes |
 
-**DawDreamer is the closest prior work** and the most useful reference. It has a complete parameter API, loads `.fxp` and `.vstpreset` files, saves and restores plugin state, and can open a plugin's editor. Its editor call is documented as blocking — it "will pause Python execution until you close the editor window" — because it is designed for a human to make an adjustment mid-script. That is the right design for its purpose and the wrong one for an automated caller, which needs the window open, observable, and driveable while it keeps working.
-
-**pedalboard** is excellent for its actual purpose, audio processing in Python, and deliberately has no editor support.
-
-**ableton-mcp-extended** shows the agent-protocol half of this problem being solved through a DAW's own scripting API. That approach inherits whatever the DAW exposes, which does not include the inside of a plugin's editor.
-
-### Adjacent work worth knowing
-
-- **DAW scripting APIs** (Reaper ReaScript, Bitwig's Controller API, the Live Object Model) reach devices and parameters, never editor internals.
-- **GUI automation frameworks** (Appium, Playwright, macOS Accessibility) assume an accessibility tree. Audio plugin editors are typically custom-drawn — often through OpenGL or Metal — and expose no such tree, which is why generic tools do not work here and why this project has to solve image capture and event injection directly.
-- **Plugin analysis tools** such as Plugin Doctor measure a plugin's transfer characteristics as a black box. Complementary to this work, not overlapping.
-
-### The contribution
-
-Stated plainly: parameter-level plugin hosting is solved. This project adds the editor — capture it, operate it, and put both behind a protocol an agent can call — and packages the result so it works standalone and inside a DAW.
+**DawDreamer is the closest prior work.** Its editor call is documented as
+blocking — it "will pause Python execution until you close the editor window" —
+because it is built for a human to make an adjustment mid-script. That is right
+for its purpose and wrong for an automated caller.
 
 ---
 
-## Design
+## Development
 
-### Components
-
-```
-  Agent  (Claude Code, Codex, a test script, anything)
-    |
-    |  MCP over stdio
-    v
-  plugshell-mcp        thin protocol adapter
-    |
-    |  JSON-RPC over local WebSocket
-    v
-  plugshell-core       C++ / JUCE
-    |
-    +-- plugin loading         AudioPluginFormatManager (VST3 + AU)
-    +-- parameters            AudioProcessorParameter
-    +-- presets               VST3 and AU preset APIs, factory banks
-    +-- editor surface        capture and event injection
-    +-- audio                 offline render and realtime device I/O
+```sh
+make deps            # JUCE, as a submodule
+make build           # configure and compile
+make check           # formatting and SPDX headers, the same checks CI runs
+make format          # rewrite sources with clang-format
+make dmg             # a distributable disk image
+make signing-status  # what this machine can and cannot sign
+make uninstall       # remove the app and everything it wrote
 ```
 
-`plugshell-core` builds into three products from one codebase:
+The build signs with the first codesigning identity in the keychain. macOS
+attaches Screen Recording and Accessibility to an application's **signature**,
+and an ad-hoc signature has no stable identity — so without this, every rebuild
+looks like a different application and both permissions need granting again.
 
-| Product | Use |
-|---|---|
-| `PlugShell.app` | Standalone. Study a plugin with no DAW running. |
-| `PlugShell.vst3` | Loaded in a DAW, hosts a child plugin, same protocol. |
-| `PlugShell.component` | Audio Unit build of the same. |
+Two habits worth keeping:
 
-The separate RPC layer exists because of the in-DAW product: a plugin cannot spawn its own agent process, so the agent connects inward. Using the same transport for the standalone app means a caller sees one interface in both modes.
+- **The RPC surface is the test harness.** Most behaviour here was verified
+  through it rather than by looking at the window, and that is deliberate.
+  `{"op":"state"}` answers questions a screenshot only appears to: more than
+  one bug in this repository's history was a window showing the right thing for
+  the wrong reason.
+- **Every source file carries an SPDX header**, checked by `make check`.
 
-### Why C++ and JUCE
+More: [docs/BUILD.md](docs/BUILD.md), [CONTRIBUTING.md](CONTRIBUTING.md),
+[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
-The VST3 SDK is C++, and JUCE is the only mature framework that hosts both VST3 and Audio Units, manages editor windows, and builds application and plugin targets from shared source. Writing the core in C++ also keeps the path to deeper DAW integration open. Higher-level languages would mean a binding layer for exactly the operations that need to be closest to the platform: window capture and event dispatch.
+---
 
-### The two mechanisms that must be proven first
+## Roadmap
 
-Everything else here is ordinary engineering. These two are not, and the project's feasibility rests on them.
+1. **Out-of-process hosting.** A plugin loaded into the host's own process
+   shares its fate, and a segmentation fault is not an exception that can be
+   caught. This has already happened here, with a released commercial plugin,
+   on the audio thread. The fix is the one every host making this promise
+   arrived at: [docs/OUT_OF_PROCESS.md](docs/OUT_OF_PROCESS.md).
+2. **Universal preset.** Recording and replaying operation sequences, bound to
+   a plugin version and verified as they replay.
+3. **Preset index.** Render every preset in a library, embed it, and answer
+   "which of these sounds closest to this".
+4. **Interface understanding.** Reading an editor well enough to name its
+   controls, so an agent can work a plugin nobody told it about.
 
-**Editor capture.** A plugin's editor is drawn by the plugin into a host-provided view. Plugins that render through OpenGL or Metal do not necessarily yield their contents to view-level snapshot APIs, which read the view's backing store. Candidate approaches, in order of preference: JUCE's `createSnapshotOfNativeWindow`; `NSView` caching APIs; `ScreenCaptureKit`, which is reliable but requires the Screen Recording permission and a window that is actually on screen.
+---
 
-**Event injection.** Synthesising a mouse event and delivering it to the editor's view is straightforward to attempt and not guaranteed to land. A plugin may run its own event handling, hit-test against GPU state, or ignore events whose provenance it does not recognise. Candidates: synthetic `NSEvent` posted to the view; `CGEvent` at the session level, which is more likely to work and less precise; the plugin framework's own event entry points where they can be identified.
+## Licence
 
-Both are per-plugin behaviours, not per-platform ones. The spike therefore tests against three plugins chosen for different rendering strategies rather than trying to reason about it in the abstract.
+AGPL-3.0-or-later. JUCE 9's modules are AGPLv3, so this is too.
 
-### Interface
+Icons from [Lucide](https://lucide.dev) (ISC). The Claude mark belongs to
+Anthropic and the Codex name to OpenAI; both appear above to say what this is
+built to be driven by, and neither implies endorsement.
 
-plugshell owns one horizontal strip along the bottom of the window. Everything else belongs to the plugin, because a host that wraps a plugin in its own chrome competes with the plugin's interface and makes the editor harder to capture cleanly. The window sizes itself to the editor and follows it when a plugin resizes its own.
+**Trademarks.** VST is a trademark of Steinberg Media Technologies GmbH, used
+here in plain text to state compatibility — which Steinberg's guidelines permit
+— and not as part of this project's name.
 
-The strip carries state, the computer-keyboard toggle with the note and chord being played, the scope, and help and settings. See [docs/UI.md](docs/UI.md).
-
-![hosting Arturia Pigments](assets/editor.webp)
-
-## What works today
-
-- **Lists installed VST3 plugins without running any of them.** Enumerating plugins by loading them is what hosts normally do, and on the development machine it started vendor licensing servers, raised error dialogs, and killed the process. Indexing reads each bundle's `Info.plist` instead.
-- **Hosts the editor unmodified**, sizes the window to it, and follows it when the plugin resizes itself.
-- **Plays instruments from the computer keyboard**, two octaves, with the chord being played named in the strip. Watched at the platform event layer, because a plugin editor is a native view and takes keyboard focus away from the host the moment it is clicked.
-- **Audio out and every MIDI input**, with no input channel requested: on a Bluetooth headset opening the microphone switches the device to the hands-free profile.
-- **A waveform and spectrum panel** that slides out of the strip, for seeing what a parameter actually did.
-
-## Documentation
-
-- [docs/BUILD.md](docs/BUILD.md) — requirements, targets, repository layout
-- [docs/UNIVERSAL_PRESET.md](docs/UNIVERSAL_PRESET.md) — operations instead of binaries, and the legal reasoning
-- [docs/UI.md](docs/UI.md) — interface principle and the control bar
-- [docs/SPIKE.md](docs/SPIKE.md) — phase-1 plan and findings
-- [CONTRIBUTING.md](CONTRIBUTING.md) — what is useful right now
-
-## Contributing
-
-The project is at design stage, so the most useful contributions right now are:
-
-- Evidence about editor capture or event injection on specific plugins, especially negative results
-- Prior art that this survey missed
-- Design critique, particularly of the RPC boundary and the in-DAW product
-
-Open an issue before writing code, so effort does not land on a phase that the spike may invalidate.
+Copyright © 2026 wheatfox &lt;wheatfox17@icloud.com&gt;
