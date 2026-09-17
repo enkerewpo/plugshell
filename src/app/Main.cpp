@@ -1072,13 +1072,19 @@ private:
         {
             addAndMakeVisible(content.get());
 
+            // The relaunch note is not padding. macOS applies Screen
+            // Recording only at launch, so allowing it and watching this row
+            // go on saying no is the expected behaviour, and looks exactly
+            // like the grant having failed.
             rows.add(new Row(
-                "Screen recording", "Needed to capture editors that draw with the GPU.",
-                &EditorProbe::hasScreenRecordingPermission, &EditorProbe::requestScreenRecordingPermission,
+                "Screen recording",
+                "Needed to capture editors that draw with the GPU. Quit and reopen after allowing it.",
+                "Granted.", &EditorProbe::hasScreenRecordingPermission,
+                &EditorProbe::requestScreenRecordingPermission,
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"));
 
             rows.add(new Row(
-                "Accessibility", "Needed to click and drag inside a plugin's editor.",
+                "Accessibility", "Needed to click and drag inside a plugin's editor.", "Granted.",
                 &EditorProbe::hasAccessibilityPermission, &EditorProbe::requestAccessibilityPermission,
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"));
 
@@ -1099,7 +1105,7 @@ private:
         }
 
     private:
-        static constexpr int rowHeight = 52;
+        static constexpr int rowHeight = 58;
 
         /** One permission: what it is for, whether it is granted, and the one
             button that can change that.
@@ -1114,9 +1120,9 @@ private:
         public:
             using Query = bool (*)();
 
-            Row(juce::String t, juce::String w, Query has, Query request, juce::String pane)
-                : title(std::move(t)), why(std::move(w)), isGranted(has), ask(request),
-                  settingsPane(std::move(pane))
+            Row(juce::String t, juce::String w, juce::String ok, Query has, Query request, juce::String pane)
+                : title(std::move(t)), why(std::move(w)), grantedNote(std::move(ok)), isGranted(has),
+                  ask(request), settingsPane(std::move(pane))
             {
                 addAndMakeVisible(action);
                 action.setColours(theme::ink, theme::mute, theme::hair);
@@ -1150,13 +1156,51 @@ private:
 
                 r = r.reduced(0, 8);
 
+                // The state has to be readable without reading it, because
+                // the whole row exists to answer one yes-or-no question.
+                drawMark(g, r.removeFromLeft(20).withSizeKeepingCentre(13, 13).toFloat());
+                r.removeFromLeft(8);
+                r.removeFromRight(104);
+
                 g.setColour(granted ? theme::ink : theme::mute);
                 g.setFont(theme::ui(theme::size::body));
                 g.drawText(title, r.removeFromTop(17), juce::Justification::centredLeft);
 
                 g.setColour(theme::mute);
                 g.setFont(theme::ui(theme::size::micro));
-                g.drawText(granted ? "Granted." : why, r, juce::Justification::centredLeft, true);
+                g.drawText(granted ? grantedNote : why, r, juce::Justification::centredLeft, true);
+            }
+
+            /** Drawn rather than set in a font, so it carries the same weight
+                as the rest of the interface and does not depend on an emoji
+                the system may decide to render in colour. */
+            void drawMark(juce::Graphics& g, juce::Rectangle<float> box) const
+            {
+                juce::Path path;
+
+                if (granted)
+                {
+                    path.startNewSubPath(box.getX(), box.getCentreY() + 0.5f);
+                    path.lineTo(box.getCentreX() - 1.0f, box.getBottom() - 2.0f);
+                    path.lineTo(box.getRight(), box.getY() + 1.0f);
+
+                    g.setColour(juce::Colour{0xff5fbf7f});
+                    g.strokePath(path, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
+                                                            juce::PathStrokeType::rounded));
+                    return;
+                }
+
+                path.startNewSubPath(box.getCentreX(), box.getY());
+                path.lineTo(box.getRight(), box.getBottom());
+                path.lineTo(box.getX(), box.getBottom());
+                path.closeSubPath();
+
+                g.setColour(juce::Colour{0xffd9a441});
+                g.strokePath(path, juce::PathStrokeType(1.4f, juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::butt));
+
+                g.fillRect(box.getCentreX() - 0.7f, box.getY() + 4.8f, 1.4f, box.getHeight() * 0.33f);
+                g.fillEllipse(box.getCentreX() - 0.8f, box.getBottom() - 3.6f, 1.6f, 1.6f);
             }
 
             void resized() override { action.setBounds(getLocalBounds().removeFromRight(96).reduced(4, 10)); }
@@ -1184,7 +1228,7 @@ private:
                 poll.startTimerHz(2);
             }
 
-            juce::String title, why;
+            juce::String title, why, grantedNote;
             Query isGranted, ask;
             juce::String settingsPane;
             StripButton action{"Allow..."};

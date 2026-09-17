@@ -94,61 +94,76 @@ bool looksBlank(NSBitmapImageRep* rep)
 API_AVAILABLE(macos(14.0))
 CGImageRef captureWindowComposited(CGWindowID windowID, juce::String& error)
 {
-    __block SCWindow* target = nil;
-    dispatch_semaphore_t found = dispatch_semaphore_create(0);
+    __block CGImageRef image = nullptr;
+    __block juce::String failure;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
 
+    // Everything happens inside the callbacks, and the only thing carried out
+    // of them is a CGImageRef.
+    //
+    // The first version held the SCWindow in a __block variable and built the
+    // filter after the handler returned. JUCE compiles Objective-C++ without
+    // ARC, so that variable did not retain anything, and by then the window
+    // had gone with the SCShareableContent that owned it -- the filter then
+    // crashed retaining a dead object. A CF type sidesteps the question
+    // entirely: CGImageRetain means the same thing either way.
     [SCShareableContent
         getShareableContentExcludingDesktopWindows:NO
                                onScreenWindowsOnly:NO
                                  completionHandler:^(SCShareableContent* content, NSError* e) {
-                                     if (e == nil)
-                                         for (SCWindow* w in content.windows)
-                                             if (w.windowID == windowID)
-                                             {
-                                                 target = w;
-                                                 break;
-                                             }
-                                     dispatch_semaphore_signal(found);
+                                     if (e != nil || content == nil)
+                                     {
+                                         failure = e != nil ? juce::String::fromUTF8(
+                                                                  [[e localizedDescription] UTF8String])
+                                                            : juce::String("no shareable content");
+                                         dispatch_semaphore_signal(done);
+                                         return;
+                                     }
+
+                                     SCWindow* target = nil;
+                                     for (SCWindow* w in content.windows)
+                                         if (w.windowID == windowID)
+                                         {
+                                             target = w;
+                                             break;
+                                         }
+
+                                     if (target == nil)
+                                     {
+                                         failure = "the window server does not list this window; Screen "
+                                                   "Recording permission is probably not granted, or was "
+                                                   "granted after this launch -- macOS only applies it at "
+                                                   "startup";
+                                         dispatch_semaphore_signal(done);
+                                         return;
+                                     }
+
+                                     SCContentFilter* filter =
+                                         [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
+
+                                     SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
+                                     config.width = (size_t)(target.frame.size.width * 2.0);
+                                     config.height = (size_t)(target.frame.size.height * 2.0);
+                                     config.showsCursor = NO;
+                                     config.captureResolution = SCCaptureResolutionBest;
+
+                                     [SCScreenshotManager
+                                         captureImageWithFilter:filter
+                                                  configuration:config
+                                              completionHandler:^(CGImageRef sample, NSError* shotError) {
+                                                  if (sample != nullptr)
+                                                      image = CGImageRetain(sample);
+                                                  else if (shotError != nil)
+                                                      failure = juce::String::fromUTF8(
+                                                          [[shotError localizedDescription] UTF8String]);
+
+                                                  dispatch_semaphore_signal(done);
+                                              }];
                                  }];
 
-    if (dispatch_semaphore_wait(found, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC))) != 0)
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC))) != 0)
     {
-        error = "timed out asking the window server what it can share";
-        return nullptr;
-    }
-
-    if (target == nil)
-    {
-        error = "the window server does not list this window; Screen Recording permission is "
-                "probably not granted";
-        return nullptr;
-    }
-
-    SCContentFilter* filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
-
-    SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
-    config.width = (size_t)(target.frame.size.width * 2.0);
-    config.height = (size_t)(target.frame.size.height * 2.0);
-    config.showsCursor = NO;
-    config.captureResolution = SCCaptureResolutionBest;
-
-    __block CGImageRef image = nullptr;
-    __block juce::String failure;
-    dispatch_semaphore_t shot = dispatch_semaphore_create(0);
-
-    [SCScreenshotManager captureImageWithFilter:filter
-                                  configuration:config
-                              completionHandler:^(CGImageRef sample, NSError* e) {
-                                  if (sample != nullptr)
-                                      image = CGImageRetain(sample);
-                                  else if (e != nil)
-                                      failure = juce::String::fromUTF8([[e localizedDescription] UTF8String]);
-                                  dispatch_semaphore_signal(shot);
-                              }];
-
-    if (dispatch_semaphore_wait(shot, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC))) != 0)
-    {
-        error = "timed out waiting for the screenshot";
+        error = "timed out waiting for the window server";
         return nullptr;
     }
 

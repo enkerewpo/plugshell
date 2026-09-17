@@ -5,7 +5,11 @@ juce_add_gui_app(plugshell_app
     BUNDLE_ID "ai.plugshell.app"
     COMPANY_NAME "wheatfox"
     ICON_BIG "${CMAKE_SOURCE_DIR}/assets/icon-1024.png"
-    ICON_SMALL "${CMAKE_SOURCE_DIR}/assets/icon-128.png")
+    ICON_SMALL "${CMAKE_SOURCE_DIR}/assets/icon-128.png"
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "plugshell uses audio input so effect plugins can process a live signal."
+    BLUETOOTH_PERMISSION_ENABLED TRUE
+    BLUETOOTH_PERMISSION_TEXT "plugshell uses Bluetooth to find and pair Bluetooth MIDI controllers.")
 
 target_sources(plugshell_app PRIVATE Main.cpp)
 
