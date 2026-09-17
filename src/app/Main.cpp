@@ -14,6 +14,7 @@
 #include "Eased.h"
 #include "EditorProbe.h"
 #include "KeyMonitor.h"
+#include "KeyboardMap.h"
 #include "OfflineRender.h"
 #include "Overlay.h"
 #include "PluginIndex.h"
@@ -452,12 +453,12 @@ public:
         {
             // Back goes up with the status rather than competing with four
             // other buttons for a narrow row, where it was left showing "B...".
-            back.setBounds(r.removeFromLeft(back.isVisible() ? 64 : 16).reduced(8, 0));
+            back.setBounds(r.removeFromLeft(back.isVisible() ? 86 : 16).reduced(6, 4));
             textRow = r.withTrimmedRight(16);
         }
         else
         {
-            back.setBounds(buttons.removeFromLeft(64).reduced(8, 0));
+            back.setBounds(buttons.removeFromLeft(86).reduced(6, 0));
             textRow = juce::Rectangle<int>();
         }
     }
@@ -1187,7 +1188,6 @@ public:
                                                    : Mode::dark;
 
         beginThemeChange();
-        applyTheme();
         saveSettings();
     }
 
@@ -1200,7 +1200,15 @@ public:
     {
         themeFrom = theme::paletteFor(!theme::isDark());
         themeTo = theme::paletteFor(theme::isDark());
+
+        // Start from where we are, not from the destination. Applying the new
+        // palette here and then letting the animation begin at the old one
+        // meant the window arrived, went back, and crossed again -- which is
+        // the flash.
         themeMix.snapTo(0.0f);
+        theme::useMix(themeFrom, themeTo, 0.0f);
+        pushColours();
+
         themeMix.setTarget(1.0f);
         themeAnim.nudge();
     }
@@ -1238,12 +1246,27 @@ public:
             window->setColour(juce::DocumentWindow::backgroundColourId, theme::base);
 
         refreshThemeButton();
-        repaint();
+        repaintTree(*this);
 
         // An open panel keeps the colours it was built with, and rebuilding it
         // under the user would lose whatever they were reading.
         if (overlay != nullptr)
             dismissOverlay();
+    }
+
+    /** Repaints every descendant, not just this component.
+
+        A repaint marks one component's area dirty, and that turned out to be
+        enough for the header and not for the plugin list inside the viewport:
+        after a theme change the bar had changed and the list under it had
+        not. */
+    static void repaintTree(juce::Component& c)
+    {
+        c.repaint();
+
+        for (int i = c.getNumChildComponents(); --i >= 0;)
+            if (auto* child = c.getChildComponent(i))
+                repaintTree(*child);
     }
 
     void refreshThemeButton()
@@ -1466,22 +1489,19 @@ private:
             return dismissOverlay();
 
         auto o = std::make_unique<Overlay>("Help", theme::base, theme::ink, theme::mute, theme::hair);
-        juce::Array<juce::StringArray> rows;
-        rows.add({"PLUGINS"});
-        rows.add({"double click", "load the plugin under the cursor"});
-        rows.add({"Back", "unload and return to the list"});
-        rows.add({"KEYBOARD AS MIDI"});
-        rows.add({juce::String(juce::CharPointer_UTF8("\xe2\x8c\x98")) + "K",
-                  "turn the computer keyboard on or off"});
-        rows.add({"z x c v b n m , .", "white keys, lower octave"});
-        rows.add({"s d   g h j   l ;", "black keys, lower octave"});
-        rows.add({"q w e r t y u i o p", "white keys, upper octave"});
-        rows.add({"2 3   5 6 7   9 0", "black keys, upper octave"});
-        rows.add({"\\    /", "octave down, octave up"});
-        rows.add({"NOTE"});
-        rows.add({"", "The keyboard is off by default because plugin editors"});
-        rows.add({"", "want the keyboard too, for typing values and searching."});
-        o->setRows(rows);
+        o->setPanelWidth(juce::jmax(660, getWidth() - 80));
+
+        // The keyboard layout is the thing being explained, so it is shown
+        // rather than described. A list of which letters are white keys is
+        // accurate and asks the reader to hold a keyboard in their head and
+        // check every letter against it.
+        o->setContent(std::make_unique<KeyboardMap>(theme::base, theme::ink, theme::mute, theme::hair),
+                      KeyboardMap::preferredHeight);
+
+        o->setFooter("Cmd-K turns the computer keyboard on and off. It is off by default, because "
+                     "plugin editors want the keyboard too -- for typing values and searching presets. "
+                     "Double click a plugin in the list to load it.");
+
         showOverlay(std::move(o));
     }
 
@@ -2112,6 +2132,20 @@ private:
             top->setTopLeftPosition(x, y);
     }
 
+    /** Brings the plugin list back, opaque.
+
+        Loading fades the list out before it begins, and the failure paths only
+        set it visible again -- which left it visible at zero alpha. An empty
+        window, no list, and no way back to one, after the single operation
+        most likely to fail. */
+    void showList()
+    {
+        viewport.setVisible(true);
+        pageFade.snapTo(1.0f);
+        viewport.setAlpha(1.0f);
+        repaintTree(*this);
+    }
+
     void finishLoading()
     {
         loading = false;
@@ -2182,7 +2216,7 @@ private:
         if (found.isEmpty())
         {
             finishLoading();
-            viewport.setVisible(true);
+            showList();
             setStripStatus("Could not read " + p.name);
             return;
         }
@@ -2193,7 +2227,7 @@ private:
         if (instance == nullptr)
         {
             finishLoading();
-            viewport.setVisible(true);
+            showList();
             setStripStatus("Failed: " + error);
             return;
         }

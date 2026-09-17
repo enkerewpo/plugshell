@@ -6,6 +6,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "Eased.h"
+#include "Icons.h"
 
 namespace plugshell
 {
@@ -108,6 +109,9 @@ public:
 
         // Braces, not parentheses: with parentheses this is a function
         // declaration, not a font.
+        const auto textColour = framed ? mute.interpolatedWith(ink, litAmount) : ink;
+        g.setColour(textColour);
+
         const juce::Font font{juce::FontOptions(textHeight)};
 
         if (glyph != Glyph::none)
@@ -117,7 +121,7 @@ public:
 
             if (label.isEmpty())
             {
-                drawGlyph(g, box.withSizeKeepingCentre(side, side).toFloat());
+                drawGlyph(g, box.withSizeKeepingCentre(side, side).toFloat(), textColour);
                 return;
             }
 
@@ -126,7 +130,7 @@ public:
             const int textWidth = juce::roundToInt(juce::GlyphArrangement::getStringWidth(font, label));
 
             auto pair = box.withSizeKeepingCentre(side + 7 + textWidth, box.getHeight());
-            drawGlyph(g, pair.removeFromLeft(side).withSizeKeepingCentre(side, side).toFloat());
+            drawGlyph(g, pair.removeFromLeft(side).withSizeKeepingCentre(side, side).toFloat(), textColour);
             pair.removeFromLeft(7);
 
             g.setFont(font);
@@ -138,66 +142,22 @@ public:
         g.drawText(label, getLocalBounds(), juce::Justification::centred);
     }
 
-    void drawGlyph(juce::Graphics& g, juce::Rectangle<float> box) const
+    void drawGlyph(juce::Graphics& g, juce::Rectangle<float> box, juce::Colour colour) const
     {
-        const auto centre = box.getCentre();
-        const float r = box.getWidth() * 0.5f;
-
         switch (glyph)
         {
         case Glyph::back:
-        {
-            // A chevron rather than an arrow: fewer strokes, and it survives
-            // being small, which an arrowhead does not.
-            juce::Path chevron;
-            chevron.startNewSubPath(centre.x + r * 0.34f, centre.y - r * 0.72f);
-            chevron.lineTo(centre.x - r * 0.38f, centre.y);
-            chevron.lineTo(centre.x + r * 0.34f, centre.y + r * 0.72f);
-
-            g.strokePath(chevron, juce::PathStrokeType(1.7f, juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded));
+            Icons::draw(g, Icons::Name::chevronLeft, box, colour);
             break;
-        }
-
         case Glyph::sun:
-        {
-            g.fillEllipse(centre.x - r * 0.4f, centre.y - r * 0.4f, r * 0.8f, r * 0.8f);
-
-            for (int i = 0; i < 8; ++i)
-            {
-                const float a = juce::MathConstants<float>::twoPi * (float) i / 8.0f;
-                g.drawLine(centre.x + std::cos(a) * r * 0.64f, centre.y + std::sin(a) * r * 0.64f,
-                           centre.x + std::cos(a) * r, centre.y + std::sin(a) * r, 1.3f);
-            }
+            Icons::draw(g, Icons::Name::sun, box, colour);
             break;
-        }
-
         case Glyph::moon:
-        {
-            // A disc with a bite out of it, which is how to get a crescent
-            // without asking two arcs to meet exactly.
-            juce::Path disc;
-            disc.addEllipse(centre.x - r, centre.y - r, r * 2.0f, r * 2.0f);
-
-            juce::Path bite;
-            bite.addEllipse(centre.x - r * 0.25f, centre.y - r * 1.3f, r * 2.0f, r * 2.0f);
-
-            disc.setUsingNonZeroWinding(false);
-            disc.addPath(bite);
-            g.fillPath(disc);
+            Icons::draw(g, Icons::Name::moon, box, colour);
             break;
-        }
-
         case Glyph::automatic:
-        {
-            juce::Path half;
-            half.addPieSegment(centre.x - r, centre.y - r, r * 2.0f, r * 2.0f, 0.0f,
-                               juce::MathConstants<float>::pi, 0.0f);
-            g.fillPath(half);
-            g.drawEllipse(centre.x - r + 0.6f, centre.y - r + 0.6f, r * 2.0f - 1.2f, r * 2.0f - 1.2f, 1.2f);
+            Icons::draw(g, Icons::Name::sunMoon, box, colour);
             break;
-        }
-
         case Glyph::none:
             break;
         }

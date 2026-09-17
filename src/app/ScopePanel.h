@@ -29,20 +29,78 @@ namespace plugshell
 class ScopePanel : public juce::Component, private juce::Timer
 {
 public:
-    static constexpr int fftOrder = 11; // 2048 points
-    static constexpr int fftSize = 1 << fftOrder;
+    // Two transform lengths, not one.
+    //
+    // A single 2048-point transform is 23Hz per bin, and on a logarithmic axis
+    // beginning at 20Hz that means the first bin owns the entire bottom of the
+    // display -- which is why it drew as blocks rather than as a spectrum.
+    // Making it long enough to fix that costs a 340ms window, which smears
+    // every transient at the top end.
+    //
+    // The principled answer is a constant-Q transform, whose bins are spaced
+    // logarithmically to begin with (Brown 1991; Velasco et al.,
+    // arxiv.org/abs/1209.0084). The practical one, and what analysers
+    // generally do, is to run both lengths and read the low end off the long
+    // transform and the high end off the short one.
+    static constexpr int fftOrderLow = 14;  // 16384 points, 2.9Hz bins
+    static constexpr int fftOrderHigh = 11; // 2048 points, quick enough to catch a transient
+    static constexpr int fftSizeLow = 1 << fftOrderLow;
+    static constexpr int fftSizeHigh = 1 << fftOrderHigh;
+
+    /** Where the short transform still has several bins to an octave. */
+    static constexpr double crossoverHz = 900.0;
+
     static constexpr int scopeFrames = 1024;
+    static constexpr int scopeLookback = 4096; ///< enough to find a trigger in
+
+    enum class WaveView
+    {
+        free,     ///< the buffer as it is
+        trigger,  ///< aligned to a rising zero crossing
+        cycle,    ///< a few periods, scaled to the pitch
+        envelope, ///< a long window, showing the shape of the note
+        count
+    };
 
     ScopePanel(const AnalyserTap& t, juce::Colour bg, juce::Colour ink, juce::Colour mute, juce::Colour hair)
-        : tap(t), colBase(bg), colInk(ink), colMute(mute), colHair(hair), fft(fftOrder),
-          window(fftSize, juce::dsp::WindowingFunction<float>::hann)
+        : tap(t), colBase(bg), colInk(ink), colMute(mute), colHair(hair), fftLow(fftOrderLow),
+          fftHigh(fftOrderHigh), windowLow(fftSizeLow, juce::dsp::WindowingFunction<float>::hann),
+          windowHigh(fftSizeHigh, juce::dsp::WindowingFunction<float>::hann)
     {
-        scope.resize(scopeFrames);
+        scope.resize(scopeLookback);
         stereoL.resize(scopeFrames);
         stereoR.resize(scopeFrames);
-        fftData.resize((size_t) fftSize * 2);
-        magnitudes.resize((size_t) fftSize / 2, -100.0f);
+        lowData.resize((size_t) fftSizeLow * 2);
+        highData.resize((size_t) fftSizeHigh * 2);
+        lowMag.resize((size_t) fftSizeLow / 2, -100.0f);
+        highMag.resize((size_t) fftSizeHigh / 2, -100.0f);
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    WaveView getWaveView() const { return waveView; }
+
+    void cycleWaveView()
+    {
+        waveView =
+            static_cast<WaveView>((static_cast<int>(waveView) + 1) % static_cast<int>(WaveView::count));
+        repaint();
+    }
+
+    static const char* nameOf(WaveView v)
+    {
+        switch (v)
+        {
+        case WaveView::free:
+            return "free";
+        case WaveView::trigger:
+            return "triggered";
+        case WaveView::cycle:
+            return "cycle";
+        case WaveView::envelope:
+            return "envelope";
+        default:
+            return "";
+        }
     }
 
     void setOpen(bool shouldOpen)
@@ -85,8 +143,11 @@ public:
         repaint();
     }
 
-    void mouseUp(const juce::MouseEvent&) override
+    void mouseUp(const juce::MouseEvent& e) override
     {
+        if (waveModeHit.contains(e.getPosition()))
+            return cycleWaveView();
+
         if (!detailed && onClick)
             onClick();
     }
@@ -179,20 +240,47 @@ private:
         tap.readLatest(scope.data(), scopeFrames);
         tap.readLatestStereo(stereoL.data(), stereoR.data(), scopeFrames);
 
-        std::fill(fftData.begin(), fftData.end(), 0.0f);
-        tap.readLatest(fftData.data(), fftSize);
-        window.multiplyWithWindowingTable(fftData.data(), (size_t) fftSize);
-        fft.performFrequencyOnlyForwardTransform(fftData.data());
+        runTransform(fftLow, windowLow, lowData, lowMag, fftSizeLow);
+        runTransform(fftHigh, windowHigh, highData, highMag, fftSizeHigh);
 
         // Slew the display down slowly so peaks stay readable, and up fast so
         // nothing is missed.
+        pushSpectrogramColumn();
+    }
+
+    void runTransform(juce::dsp::FFT& fft, juce::dsp::WindowingFunction<float>& window,
+                      std::vector<float>& data, std::vector<float>& magnitudes, int size)
+    {
+        std::fill(data.begin(), data.end(), 0.0f);
+        tap.readLatest(data.data(), size);
+        window.multiplyWithWindowingTable(data.data(), (size_t) size);
+        fft.performFrequencyOnlyForwardTransform(data.data());
+
+        // Slew down slowly so peaks stay readable and up at once so nothing is
+        // missed: a display that averaged both ways would show neither the
+        // peak nor the attack.
         for (size_t i = 0; i < magnitudes.size(); ++i)
         {
-            const float db = juce::Decibels::gainToDecibels(fftData[i] / (float) (fftSize / 4), -100.0f);
+            const float db = juce::Decibels::gainToDecibels(data[i] / (float) (size / 4), -100.0f);
             magnitudes[i] = db > magnitudes[i] ? db : magnitudes[i] * 0.88f + db * 0.12f;
         }
+    }
 
-        pushSpectrogramColumn();
+    /** The level at a frequency, read from whichever transform resolves it
+        better and interpolated between bins. */
+    float magnitudeAt(double f, double rate) const
+    {
+        const bool low = f < crossoverHz;
+        const auto& mags = low ? lowMag : highMag;
+        const int size = low ? fftSizeLow : fftSizeHigh;
+
+        const double bin = f * size / juce::jmax(1.0, rate);
+        const int last = (int) mags.size() - 1;
+        const int a = juce::jlimit(0, last, (int) bin);
+        const int b = juce::jlimit(0, last, a + 1);
+        const float t = (float) (bin - (double) a);
+
+        return mags[(size_t) a] * (1.0f - t) + mags[(size_t) b] * t;
     }
 
     /** History for the waterfall, newest last.
@@ -211,9 +299,7 @@ private:
             // Log frequency, so the octaves are evenly spaced and the bottom
             // four of them are not squeezed into three pixels.
             const double f = 20.0 * std::pow(1000.0, (double) y / (double) (rows - 1));
-            const int bin = juce::jlimit(0, (int) magnitudes.size() - 1,
-                                         (int) (f * fftSize / juce::jmax(1.0, tap.getSampleRate())));
-            column[(size_t) y] = magnitudes[(size_t) bin];
+            column[(size_t) y] = magnitudeAt(f, tap.getSampleRate());
         }
 
         history.push_back(std::move(column));
@@ -225,6 +311,28 @@ private:
     void drawScope(juce::Graphics& g, juce::Rectangle<int> area)
     {
         label(g, area, "WAVEFORM");
+
+        // The mode sits beside the title and is the thing you click. Sound
+        // design needs the shape of a cycle, and the shape of a cycle is not
+        // visible in a free-running buffer at any pitch that is not an exact
+        // divisor of the window.
+        waveModeHit = area.removeFromTop(0);
+        {
+            auto strip = juce::Rectangle<int>(area.getX(), area.getY() - 18, area.getWidth(), 16);
+            const auto text = juce::String(nameOf(waveView));
+            const int width = juce::roundToInt(juce::GlyphArrangement::getStringWidth(
+                                  juce::Font(juce::FontOptions(10.5f)), text)) +
+                              14;
+
+            waveModeHit = strip.removeFromRight(juce::jmin(width, strip.getWidth() / 2));
+
+            g.setColour(colHair);
+            g.drawRoundedRectangle(waveModeHit.toFloat().reduced(0.5f), 3.0f, 1.0f);
+            g.setColour(colMute);
+            g.setFont(juce::Font(juce::FontOptions(10.5f)));
+            g.drawText(text, waveModeHit, juce::Justification::centred);
+        }
+
         auto plot = area.withTrimmedTop(18);
 
         g.setColour(colHair);
@@ -232,45 +340,142 @@ private:
         g.drawLine((float) plot.getX(), (float) plot.getCentreY(), (float) plot.getRight(),
                    (float) plot.getCentreY(), 1.0f);
 
-        // Min and max per column rather than one sample per column: at these
-        // widths a single sample misses most of the waveform and draws a
-        // sparse, aliased line instead of the shape that is actually there.
-        const float h = plot.getHeight() * 0.44f;
         const int w = juce::jmax(1, plot.getWidth());
 
-        juce::Path body;
-        body.startNewSubPath((float) plot.getX(), (float) plot.getCentreY());
+        // Where in the buffer to start, and how much of it to show.
+        int start = scopeLookback - scopeFrames;
+        int span = scopeFrames;
 
+        switch (waveView)
+        {
+        case WaveView::trigger:
+            start = findTrigger(scopeFrames);
+            break;
+
+        case WaveView::cycle:
+        {
+            // Three periods, so the shape repeats enough to read as a shape
+            // and not so often that it turns back into a band.
+            const int period = estimatePeriod();
+            span = juce::jlimit(64, scopeLookback / 2, period * 3);
+            start = findTrigger(span);
+            break;
+        }
+
+        case WaveView::envelope:
+            start = 0;
+            span = scopeLookback;
+            break;
+
+        case WaveView::free:
+        default:
+            break;
+        }
+
+        // Scaled to fill the box. A synth patch at a sensible level occupies a
+        // tenth of the height at unity, which is a flat line with a wobble --
+        // useless for the one thing this display is for. The gain follows the
+        // signal slowly so the trace does not breathe.
+        float peak = 1.0e-4f;
+        for (int i = start; i < juce::jmin(scopeLookback, start + span); ++i)
+            peak = juce::jmax(peak, std::abs(scope[(size_t) i]));
+
+        const float wanted = juce::jlimit(1.0f, 64.0f, 0.92f / peak);
+        waveGain = wanted < waveGain ? wanted : waveGain * 0.9f + wanted * 0.1f;
+
+        const float h = plot.getHeight() * 0.46f;
+
+        juce::Path body;
         juce::Array<float> tops, bottoms;
         tops.ensureStorageAllocated(w);
         bottoms.ensureStorageAllocated(w);
 
         for (int x = 0; x < w; ++x)
         {
-            const int from = x * scopeFrames / w;
-            const int to = juce::jmax(from + 1, (x + 1) * scopeFrames / w);
+            const int from = start + x * span / w;
+            const int to = juce::jmax(from + 1, start + (x + 1) * span / w);
 
             float lo = 1.0f, hi = -1.0f;
-            for (int i = from; i < to && i < scopeFrames; ++i)
+            for (int i = from; i < to && i < scopeLookback; ++i)
             {
-                lo = juce::jmin(lo, scope[(size_t) i]);
-                hi = juce::jmax(hi, scope[(size_t) i]);
+                const float v = scope[(size_t) i] * waveGain;
+                lo = juce::jmin(lo, v);
+                hi = juce::jmax(hi, v);
             }
 
             tops.add(plot.getCentreY() - juce::jlimit(-1.0f, 1.0f, hi) * h);
             bottoms.add(plot.getCentreY() - juce::jlimit(-1.0f, 1.0f, lo) * h);
         }
 
+        body.startNewSubPath((float) plot.getX(), (float) plot.getCentreY());
         for (int x = 0; x < w; ++x)
             body.lineTo((float) (plot.getX() + x), tops[x]);
         for (int x = w - 1; x >= 0; --x)
             body.lineTo((float) (plot.getX() + x), bottoms[x]);
         body.closeSubPath();
 
+        juce::Graphics::ScopedSaveState clip(g);
+        g.reduceClipRegion(plot.reduced(1));
+
         g.setColour(colInk.withAlpha(0.16f));
         g.fillPath(body);
         g.setColour(colInk);
         g.strokePath(body, juce::PathStrokeType(1.0f));
+
+        if (waveGain > 1.05f)
+        {
+            g.setColour(colMute.withAlpha(0.8f));
+            g.setFont(juce::Font(juce::FontOptions(9.5f)));
+            g.drawText(juce::String(juce::Decibels::gainToDecibels(waveGain), 0) + " dB",
+                       plot.reduced(4).removeFromTop(12), juce::Justification::right);
+        }
+    }
+
+    /** The most recent rising zero crossing that leaves room for `span`.
+
+        Without it a periodic wave slides across the display at the difference
+        between its period and the refresh, which is the blur that makes the
+        shape unreadable. This is what the trigger control on a bench
+        oscilloscope does, and for the same reason. */
+    int findTrigger(int span) const
+    {
+        const int latest = juce::jmax(0, scopeLookback - span);
+
+        for (int i = latest; i > 1; --i)
+            if (scope[(size_t) (i - 1)] <= 0.0f && scope[(size_t) i] > 0.0f)
+                return i;
+
+        return latest;
+    }
+
+    /** The period, by autocorrelation over the plausible musical range.
+
+        Cheap, and good enough to hold a picture steady -- it does not have to
+        be right about the pitch, only consistent from frame to frame. */
+    int estimatePeriod() const
+    {
+        const int from = 32; // ~1.5kHz at 48k
+        const int to = 1200; // ~40Hz
+        const int window = 2048;
+        const int base = juce::jmax(0, scopeLookback - window - to);
+
+        double best = 0.0;
+        int bestLag = 256;
+
+        for (int lag = from; lag < to; lag += 2)
+        {
+            double sum = 0.0;
+            for (int i = 0; i < window; i += 4)
+                sum += (double) scope[(size_t) (base + i)] * scope[(size_t) (base + i + lag)];
+
+            if (sum > best)
+            {
+                best = sum;
+                bestLag = lag;
+            }
+        }
+
+        return bestLag;
     }
 
     void drawSpectrum(juce::Graphics& g, juce::Rectangle<int> area)
@@ -291,13 +496,11 @@ private:
             g.setColour(colHair);
             g.drawVerticalLine(juce::roundToInt(x), (float) plot.getY(), (float) plot.getBottom());
             g.setColour(colMute);
-            g.setFont(juce::Font(juce::FontOptions(9.0f)));
+            g.setFont(juce::Font(juce::FontOptions(9.5f)));
             g.drawText(f >= 1000.0 ? juce::String(f / 1000.0, 0) + "k" : juce::String(f, 0),
                        juce::roundToInt(x) + 3, plot.getBottom() - 14, 40, 12, juce::Justification::left);
         }
 
-        // Horizontal dB gridlines, so the trace can be read as a level and
-        // not only as a shape.
         for (const int db : {-20, -40, -60, -80})
         {
             const float y =
@@ -305,44 +508,38 @@ private:
             g.setColour(colHair.withAlpha(0.6f));
             g.drawHorizontalLine(juce::roundToInt(y), (float) plot.getX(), (float) plot.getRight());
             g.setColour(colMute);
-            g.setFont(juce::Font(juce::FontOptions(9.0f)));
+            g.setFont(juce::Font(juce::FontOptions(9.5f)));
             g.drawText(juce::String(db), plot.getX() + 3, juce::roundToInt(y) - 11, 30, 11,
                        juce::Justification::left);
         }
 
         juce::Path p;
         bool started = false;
+
         for (int x = 0; x < plot.getWidth(); ++x)
         {
             const int w = juce::jmax(1, plot.getWidth());
             const double f = xToFreq((float) x / (float) w, rate);
             const double fNext = xToFreq((float) (x + 1) / (float) w, rate);
 
-            // A log frequency axis spreads the low bins over many pixels and
-            // crams the high ones into a fraction of a pixel, so one bin per
-            // pixel gives a staircase at the bottom and aliasing at the top.
-            // Below a bin per pixel, interpolate between neighbours; above it,
-            // take the loudest bin in the span, which is what a peak reading
-            // should do and is stable while the display slews.
-            const double binF = f * fftSize / rate;
-            const double binNext = fNext * fftSize / rate;
-            const int last = (int) magnitudes.size() - 1;
+            // Read from whichever transform resolves this part of the range,
+            // and take the loudest point across the pixel's span where that
+            // span covers more than one bin -- a peak reading, which is what
+            // stays steady while the display slews.
+            float db = magnitudeAt(f, rate);
 
-            float db;
+            const bool low = f < crossoverHz;
+            const int size = low ? fftSizeLow : fftSizeHigh;
 
-            if (binNext - binF < 1.0)
+            if ((fNext - f) * size / rate > 1.0)
             {
-                const int lo = juce::jlimit(0, last, (int) binF);
-                const int hi = juce::jlimit(0, last, lo + 1);
-                const float t = (float) (binF - (double) lo);
-                db = magnitudes[(size_t) lo] * (1.0f - t) + magnitudes[(size_t) hi] * t;
-            }
-            else
-            {
-                db = -100.0f;
-                for (int b = juce::jlimit(0, last, (int) binF); b <= juce::jlimit(0, last, (int) binNext);
-                     ++b)
-                    db = juce::jmax(db, magnitudes[(size_t) b]);
+                const auto& mags = low ? lowMag : highMag;
+                const int last = (int) mags.size() - 1;
+                const int from = juce::jlimit(0, last, (int) (f * size / rate));
+                const int to = juce::jlimit(0, last, (int) (fNext * size / rate));
+
+                for (int b = from; b <= to; ++b)
+                    db = juce::jmax(db, mags[(size_t) b]);
             }
 
             const float y = juce::jmap(juce::jlimit(-90.0f, 0.0f, db), -90.0f, 0.0f, (float) plot.getBottom(),
@@ -359,8 +556,11 @@ private:
             }
         }
 
+        juce::Graphics::ScopedSaveState clip(g);
+        g.reduceClipRegion(plot.reduced(1));
+
         // Filled under the curve: a spectrum reads as a mass of energy rather
-        // than as a wire, and the fill also hides the noise floor's jitter.
+        // than as a wire, and the fill hides the noise floor's jitter.
         juce::Path filled(p);
         filled.lineTo((float) plot.getRight(), (float) plot.getBottom());
         filled.lineTo((float) plot.getX(), (float) plot.getBottom());
@@ -477,6 +677,13 @@ private:
         double sumLR = 0.0, sumLL = 0.0, sumRR = 0.0;
         juce::Path dots;
 
+        // Out-of-phase material lands outside the quarter turn that atan2
+        // covers for in-phase signal, and doubling that angle puts it below
+        // the origin -- which is correct and worth showing, but only inside
+        // the frame.
+        juce::Graphics::ScopedSaveState clip(g);
+        g.reduceClipRegion(plot.reduced(1));
+
         for (int i = 0; i < scopeFrames; i += 2)
         {
             const float l = stereoL[(size_t) i], r = stereoR[(size_t) i];
@@ -509,8 +716,8 @@ private:
 
         g.setColour(correlation < 0.0 ? juce::Colour{0xffd9a441} : colMute);
         g.setFont(juce::Font(juce::FontOptions(10.5f)));
-        g.drawText("correlation " + juce::String(correlation, 2),
-                   plot.reduced(4).removeFromBottom(13), juce::Justification::centred);
+        g.drawText("correlation " + juce::String(correlation, 2), plot.reduced(4).removeFromBottom(13),
+                   juce::Justification::centred);
     }
 
     void label(juce::Graphics& g, juce::Rectangle<int> area, const char* text)
@@ -543,9 +750,13 @@ private:
     std::deque<std::vector<float>> history;
 
     juce::Colour colBase, colInk, colMute, colHair;
-    juce::dsp::FFT fft;
-    juce::dsp::WindowingFunction<float> window;
-    std::vector<float> scope, fftData, magnitudes;
+    WaveView waveView = WaveView::trigger;
+    juce::Rectangle<int> waveModeHit;
+    float waveGain = 1.0f;
+
+    juce::dsp::FFT fftLow, fftHigh;
+    juce::dsp::WindowingFunction<float> windowLow, windowHigh;
+    std::vector<float> scope, lowData, highData, lowMag, highMag;
     bool open = false;
     float extent = 0.0f;
 };
