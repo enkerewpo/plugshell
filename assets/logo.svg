@@ -1,0 +1,35 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>vstshell</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b3350"/>
+      <stop offset="1" stop-color="#151a2b"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#4da3ff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#4da3ff" stop-opacity="1"/>
+      <stop offset="1"   stop-color="#4da3ff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="114" fill="url(#bg)"/>
+
+  <!-- the enclosure: a shell around something -->
+  <rect x="96" y="128" width="320" height="256" rx="26"
+        fill="none" stroke="#4da3ff" stroke-width="14"/>
+
+  <!-- the plugin inside, seen rather than hidden -->
+  <rect x="140" y="172" width="232" height="140" rx="12" fill="#0d1120"/>
+
+  <!-- a filter curve: what the host can now see -->
+  <path d="M158 286 L214 286 Q252 286 268 232 Q280 196 300 196 L356 196"
+        fill="none" stroke="#7ee0a8" stroke-width="11"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="268" cy="232" r="13" fill="#7ee0a8"/>
+
+  <!-- the control bar: the one strip vstshell owns -->
+  <rect x="140" y="330" width="232" height="26" rx="13" fill="#4da3ff" opacity="0.22"/>
+  <rect x="140" y="330" width="96"  height="26" rx="13" fill="url(#beam)"/>
+  <circle cx="163" cy="343" r="7" fill="#4da3ff"/>
+</svg>

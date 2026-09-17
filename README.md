@@ -171,9 +171,27 @@ VST is a trademark of Steinberg Media Technologies GmbH. This project is not aff
 
 ---
 
+## Universal presets
+
+A preset today is an opaque binary blob written by one plugin and readable only by that plugin. It cannot be read, diffed, version-controlled, ported, or shared without redistributing the vendor's bytes.
+
+Because vstshell can observe and drive an editor, it can record **what was done** rather than **what resulted**: a readable, diffable sequence of parameter changes and UI operations that reproduces a patch from a named starting point.
+
+This is arguably the project's most useful contribution, and it carries a legal dimension that is worth stating rather than assuming. A list of parameter values is unlikely to attract copyright — facts are not copyrightable under *Feist*, functional elements are filtered out of software infringement analysis, and a compilation gets only thin protection in its selection and arrangement. The binding constraint is contractual: plugin EULAs commonly restrict redistribution of factory content, and reformatting someone's content does not launder it. The design therefore records what a user does rather than decompiling preset files, and deliberately ships no bulk extraction feature.
+
+See [docs/UNIVERSAL_PRESET.md](docs/UNIVERSAL_PRESET.md) for the format sketch, the reasoning and the sources.
+
+## Interface
+
+vstshell owns one horizontal strip along the bottom of the window. Everything else belongs to the plugin, because a host that wraps a plugin in its own chrome competes with the plugin's interface and makes the editor harder to capture cleanly. See [docs/UI.md](docs/UI.md).
+
+![interface](assets/ui-mockup.png)
+
 ## Documentation
 
 - [docs/BUILD.md](docs/BUILD.md) — requirements, targets, repository layout
+- [docs/UNIVERSAL_PRESET.md](docs/UNIVERSAL_PRESET.md) — operations instead of binaries, and the legal reasoning
+- [docs/UI.md](docs/UI.md) — interface principle and the control bar
 - [docs/SPIKE.md](docs/SPIKE.md) — phase-1 plan and findings
 - [CONTRIBUTING.md](CONTRIBUTING.md) — what is useful right now
 
