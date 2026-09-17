@@ -12,6 +12,51 @@ It runs two ways: as a standalone macOS application for studying a plugin on its
 
 ---
 
+## Installing
+
+### From a release
+
+Download the disk image, drag `plugshell.app` onto Applications, and open it.
+
+**The first launch is blocked.** macOS says it cannot verify the developer,
+because the application is not signed with an Apple Developer ID — a paid
+membership, not a security property. To allow it:
+
+> **System Settings > Privacy & Security**, scroll down to the message about
+> plugshell, click **Open Anyway**, and confirm.
+
+That is one time. It opens normally afterwards. The older Control-click > Open
+shortcut was removed in a recent macOS and no longer works, so ignore any
+instructions that mention it.
+
+### From source
+
+No Gatekeeper step, because nothing was downloaded:
+
+```sh
+git clone https://github.com/enkerewpo/plugshell.git
+cd plugshell
+make deps && make build
+```
+
+Needs the Xcode command line tools, CMake and Ninja. See [docs/BUILD.md](docs/BUILD.md).
+
+### Permissions
+
+Two features need macOS permission, and **both fail silently without it** — the
+operation reports success and nothing happens:
+
+| Permission | Needed for |
+|---|---|
+| Screen Recording | reading a plugin's editor as an image |
+| Accessibility | clicking and dragging inside that editor |
+
+plugshell's Settings panel has a row for each showing whether it is granted.
+Everything else — loading plugins, parameters, the keyboard, the analyser —
+works without them.
+
+---
+
 ## Motivation
 
 Two things are hard to do with an audio plugin today.

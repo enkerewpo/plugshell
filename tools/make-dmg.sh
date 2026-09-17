@@ -58,14 +58,55 @@ if [ -n "$SIGN_ID" ]; then
 
     codesign --verify --strict --verbose=2 "$STAGE/$APP_NAME.app"
 else
-    warn "No Developer ID identity set (PLUGSHELL_DEVELOPER_ID)."
-    warn "The image will build, and macOS will refuse to open it without the"
-    warn "right-click > Open detour. See docs/DISTRIBUTION.md."
+    # Re-signed ad-hoc rather than shipped with whatever the build used.
+    # The development certificate that makes local permissions stick carries
+    # the developer's real name and team, and publishing a binary is not the
+    # place for it -- especially as Gatekeeper rejects a development signature
+    # just as firmly as no signature at all, so it buys the user nothing.
+    codesign --force --deep --sign - "$STAGE/$APP_NAME.app"
+
+    warn "No Developer ID (PLUGSHELL_DEVELOPER_ID unset): signed ad-hoc."
+    warn "The image installs and runs, but the first launch is blocked and the"
+    warn "user has to allow it once in System Settings > Privacy & Security."
+    warn "INSTALL.txt in the image explains it. See docs/DISTRIBUTION.md."
 fi
 
 # ---------------------------------------------------------------- the image
 
 ln -s /Applications "$STAGE/Applications"
+
+# The first launch is blocked and the reason is not the user's fault, so the
+# explanation travels with the image rather than living in a README they would
+# have to already have found.
+if [ -z "$SIGN_ID" ]; then
+    cat >"$STAGE/INSTALL.txt" <<'NOTE'
+plugshell
+
+1. Drag plugshell.app onto the Applications folder here.
+
+2. Open it. macOS will refuse, saying it cannot verify the developer.
+   This is expected: the application is not signed with an Apple
+   Developer ID, which is a paid membership rather than a security
+   property.
+
+3. Open System Settings, go to Privacy & Security, and scroll down.
+   A message about plugshell will be there with an "Open Anyway"
+   button. Click it and confirm.
+
+   That is a one-time step. It will open normally from then on.
+
+4. Two features need permission, and both fail silently without it:
+
+     Screen recording  - reading a plugin's editor as an image
+     Accessibility     - clicking and dragging inside that editor
+
+   plugshell's own Settings panel has a row for each, showing whether
+   it is granted. Everything else works without them.
+
+Source, and the reasoning behind all of the above:
+https://github.com/enkerewpo/plugshell
+NOTE
+fi
 
 say "Building $DMG"
 hdiutil create \
