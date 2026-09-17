@@ -44,6 +44,18 @@ public:
         repaint();
     }
 
+    /** Where the darkening stops, in this component's own coordinates.
+
+        The panel's window is allowed to be larger than the host's, so that a
+        narrow plugin does not squeeze it into an unreadable column. That makes
+        the scrim overhang, dimming the desktop and whatever else is behind --
+        which says the whole screen is blocked when only this window is. */
+    void setScrimArea(juce::Rectangle<int> area)
+    {
+        scrim = area;
+        repaint();
+    }
+
     /** Widens the panel past the default reading width. A list of shortcuts
         wants a column; an analyser wants the whole window. */
     void setPanelWidth(int w)
@@ -106,7 +118,13 @@ public:
     {
         const float t = appear.get();
 
-        g.fillAll(colBase.withAlpha(0.94f * t));
+        // Only over the window it belongs to. Rounded to the same degree the
+        // window is, so the corners do not show a dark square behind a light
+        // curve.
+        const auto darkened = scrim.isEmpty() ? getLocalBounds() : scrim;
+
+        g.setColour(colBase.withAlpha(0.94f * t));
+        g.fillRoundedRectangle(darkened.toFloat(), 10.0f);
 
         // Rounded, because a panel floating over the page is a card and a
         // card has corners. The scrim behind it keeps its square edges -- it
@@ -154,8 +172,8 @@ public:
 
         g.setColour(colMute);
         g.setFont(juce::Font(juce::FontOptions(12.5f)));
-        g.drawText("esc", panel.getRight() - 86.0f, panel.getY() + 20.0f, 34, 20,
-                   juce::Justification::centredRight);
+        g.drawText(juce::String::fromUTF8("\xe2\x8c\x98W"), panel.getRight() - 92.0f, panel.getY() + 20.0f,
+                   40, 20, juce::Justification::centredRight);
 
         g.setColour(colHair);
         g.drawLine((float) panel.getX() + 24.0f, (float) panel.getY() + 52.0f,
@@ -274,6 +292,7 @@ private:
         return juce::Rectangle<int>(w, h).withCentre(getLocalBounds().getCentre());
     }
 
+    juce::Rectangle<int> scrim;
     juce::Rectangle<int> closeHit;
     bool closeHot = false;
     Eased appear{0.0f};

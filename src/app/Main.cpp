@@ -1484,7 +1484,11 @@ private:
         const int h = juce::jlimit(juce::jmin(overlayMinHeight, work.getHeight()), work.getHeight(),
                                    juce::jmax(host.getHeight(), overlayMinHeight));
 
-        overlay->setBounds(juce::Rectangle<int>(w, h).withCentre(host.getCentre()).constrainedWithin(work));
+        const auto bounds = juce::Rectangle<int>(w, h).withCentre(host.getCentre()).constrainedWithin(work);
+        overlay->setBounds(bounds);
+
+        // The host's rectangle, expressed where the panel can use it.
+        overlay->setScrimArea(host - bounds.getPosition());
     }
 
     void dismissOverlay()
@@ -1861,6 +1865,18 @@ private:
                 setKeysEnabled(!keysEnabled);
                 return true;
             }
+
+            // Closing a panel is bound here because Escape demonstrably does
+            // not arrive -- with a panel open, "x" reaches this handler and
+            // Escape does not, by character or by key code, so something takes
+            // it before the application is given the chance. Command chords do
+            // arrive, which is how Cmd-K has been working all along.
+            if (isDown && c == 'w' && overlay != nullptr)
+            {
+                dismissOverlay();
+                return true;
+            }
+
             return false; // every other command shortcut belongs to the host or plugin
         }
 
