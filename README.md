@@ -2,14 +2,20 @@
 
 # plugshell
 
-**A macOS host that lets a program work an audio plugin.**
+**A host that lets a program work an audio plugin.**
 
 Not only read its parameters — see its editor, click the controls that are not
 parameters, render it to audio, and describe a patch as a sequence of
 operations rather than an opaque binary blob.
 
 > **Status: early, and it runs.** Everything under [What works](#what-works) is
-> built and has been used. Everything under [Roadmap](#roadmap) has not.
+> built and has been used; everything under [Roadmap](#roadmap) is not.
+>
+> **macOS first, not macOS only.** Editor capture and synthetic input are the
+> two parts that are genuinely platform work, and they are written against a
+> small shim -- `EditorProbe` -- with the rest of the application above it.
+> Windows and Linux mean a second implementation of that shim, not a second
+> application.
 
 ---
 
