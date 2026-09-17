@@ -22,6 +22,7 @@
 #include "QwertyKeys.h"
 #include "ScopePanel.h"
 #include "StripButton.h"
+#include "TempoField.h"
 #include "TypeIcon.h"
 
 namespace plugshell
@@ -277,7 +278,7 @@ public:
     std::function<void()> onSettings;
     std::function<void()> onScope;
     std::function<void()> onTransport;
-    std::function<void(int)> onTempoDrag;
+    std::function<void(double bpm, int upper, int lower)> onTempo;
 
     ControlStrip()
     {
@@ -291,17 +292,20 @@ public:
         back.setGlyph(StripButton::Glyph::back);
 
         transport.setFramed(true);
-        transport.setTooltip("Click to start and stop. Drag up and down for tempo.");
+        transport.setTooltip("Start and stop");
+        transport.setGlyph(StripButton::Glyph::play);
         transport.onClick = [this]
         {
             if (onTransport)
                 onTransport();
         };
-        transport.onDrag = [this](int steps)
+        tempo.setTooltip("Drag for a nudge, click to type: \"94\", \"6/8\" or \"94 6/8\".");
+        tempo.onChange = [this](double bpm, int upper, int lower)
         {
-            if (onTempoDrag)
-                onTempoDrag(steps);
+            if (onTempo)
+                onTempo(bpm, upper, lower);
         };
+        addAndMakeVisible(tempo);
         back.onClick = [this]
         {
             if (onBack)
@@ -357,6 +361,8 @@ public:
         for (auto* b : {&back, &keys, &scope, &help, &settings, &transport})
             b->setColours(theme::ink, theme::mute, theme::hair);
 
+        tempo.setColours(theme::ink, theme::mute, theme::hair);
+
         repaint();
     }
 
@@ -369,8 +375,8 @@ public:
     void setTransport(bool playing, double bpm, int upper, int lower)
     {
         transport.setToggled(playing);
-        transport.setText(juce::String(bpm, bpm == std::floor(bpm) ? 0 : 1) + "  " + juce::String(upper) +
-                          "/" + juce::String(lower));
+        transport.setGlyph(playing ? StripButton::Glyph::stop : StripButton::Glyph::play);
+        tempo.setValue(bpm, upper, lower);
     }
 
     void setKeys(bool on, int octave)
@@ -408,7 +414,10 @@ public:
             // added to its left, and then the status text ran underneath the
             // new control.
             int leftmost = getWidth();
-            for (const auto* b : {&transport, &keys, &scope, &help, &settings})
+            for (const juce::Component* b :
+                 {(const juce::Component*) &transport, (const juce::Component*) &tempo,
+                  (const juce::Component*) &keys, (const juce::Component*) &scope,
+                  (const juce::Component*) &help, (const juce::Component*) &settings})
                 if (b->isVisible())
                     leftmost = juce::jmin(leftmost, b->getX());
 
@@ -482,7 +491,8 @@ public:
         help.setBounds(buttons.removeFromRight(56));
         scope.setBounds(buttons.removeFromRight(72).reduced(4, 0));
         keys.setBounds(buttons.removeFromRight(keysWidth).reduced(6, 0));
-        transport.setBounds(buttons.removeFromRight(96).reduced(4, 0));
+        tempo.setBounds(buttons.removeFromRight(92).reduced(4, 0));
+        transport.setBounds(buttons.removeFromRight(38).reduced(3, 0));
 
         if (twoRows)
         {
@@ -502,7 +512,8 @@ private:
     bool twoRows = false;
     juce::Rectangle<int> textRow;
     StripButton back{"Back"}, keys{"keys off"}, scope{"Scope"}, help{"Help"}, settings{"Settings"},
-        transport{"120  4/4"};
+        transport{{}};
+    TempoField tempo;
     juce::String status{"Select a plugin"}, right, rightMedium, rightShort, playedNotes, playedChord;
 };
 
@@ -653,9 +664,10 @@ public:
             refreshTransport();
         };
 
-        strip.onTempoDrag = [this](int steps)
+        strip.onTempo = [this](double bpm, int upper, int lower)
         {
-            playHead.setTempo(playHead.getTempo() + steps);
+            playHead.setTempo(bpm);
+            playHead.setTimeSignature(upper, lower);
             refreshTransport();
         };
         strip.onScope = [this]
@@ -1970,6 +1982,15 @@ private:
 
             return false; // every other command shortcut belongs to the host or plugin
         }
+
+        // Not while something is being typed into. The monitor sits ahead of
+        // the whole component tree, so with the keyboard mode on it was taking
+        // the keys out of any text field in the application -- typing a tempo
+        // played a chord instead.
+        if (auto* focused = juce::Component::getCurrentlyFocusedComponent())
+            if (dynamic_cast<juce::TextEditor*>(focused) != nullptr ||
+                focused->findParentComponentOfClass<juce::TextEditor>() != nullptr)
+                return false;
 
         if (!keysEnabled || instance == nullptr)
             return false;

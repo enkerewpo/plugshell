@@ -32,7 +32,9 @@ public:
         moon,
         sun,
         automatic, ///< half of each
-        back
+        back,
+        play,
+        stop
     };
 
     void setGlyph(Glyph g)
@@ -161,6 +163,12 @@ public:
             break;
         case Glyph::automatic:
             Icons::draw(g, Icons::Name::sunMoon, box, colour);
+            break;
+        case Glyph::play:
+            Icons::draw(g, Icons::Name::play, box, colour);
+            break;
+        case Glyph::stop:
+            Icons::draw(g, Icons::Name::stop, box, colour);
             break;
         case Glyph::none:
             break;

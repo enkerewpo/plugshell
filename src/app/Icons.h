@@ -33,7 +33,9 @@ public:
         sun,
         moon,
         sunMoon, ///< follows the system
-        chevronLeft
+        chevronLeft,
+        play,
+        stop
     };
 
     /** Draws `name` centred in `box`, recoloured to `colour`. */
@@ -106,6 +108,12 @@ private:
 
         case Name::chevronLeft:
             return {"m15 18-6-6 6-6"};
+
+        case Name::play:
+            return {"M6 4 20 12 6 20 Z"};
+
+        case Name::stop:
+            return {"M6 6 18 6 18 18 6 18 Z"};
         }
 
         return {};
