@@ -38,12 +38,13 @@ public:
         scope.resize(scopeFrames);
         fftData.resize((size_t) fftSize * 2);
         magnitudes.resize((size_t) fftSize / 2, -100.0f);
-        setInterceptsMouseClicks(false, false);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
     void setOpen(bool shouldOpen)
     {
         open = shouldOpen;
+        extent = detailed ? 1.0f : extent;
         startTimerHz(60); // runs until the slide settles; stops itself after
     }
 
@@ -56,13 +57,46 @@ public:
 
     std::function<void()> onExtentChanged;
 
+    /** Clicking the inline strip asks for the full-size view. */
+    std::function<void()> onClick;
+
+    /** The inline strip is deliberately small, because the window has to grow
+        by whatever it takes and a tall panel pushes the strip off the bottom
+        of the display on a laptop. Detail is a separate, larger view rather
+        than a taller inline one. */
+    void setDetailed(bool d)
+    {
+        detailed = d;
+        if (d)
+            setMouseCursor(juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+
+    void mouseUp(const juce::MouseEvent&) override
+    {
+        if (!detailed && onClick)
+            onClick();
+    }
+
     void paint(juce::Graphics& g) override
     {
         g.fillAll(colBase);
         g.setColour(colHair);
         g.drawLine(0.0f, 0.0f, (float) getWidth(), 0.0f, 1.0f);
 
-        auto r = getLocalBounds().reduced(16, 12);
+        auto r = getLocalBounds().reduced(detailed ? 22 : 16, detailed ? 18 : 9);
+
+        if (detailed && getHeight() > 420)
+        {
+            // Stacked when there is real room: a spectrum is worth more width
+            // than height, and the waveform reads better wide as well.
+            auto top = r.removeFromTop(r.getHeight() / 2 - 10);
+            r.removeFromTop(20);
+            drawScope(g, top);
+            drawSpectrum(g, r);
+            return;
+        }
+
         auto left = r.removeFromLeft(r.getWidth() / 2 - 8);
         r.removeFromLeft(16);
 
@@ -265,6 +299,7 @@ private:
     }
 
     const AnalyserTap& tap;
+    bool detailed = false;
     juce::Colour colBase, colInk, colMute, colHair;
     juce::dsp::FFT fft;
     juce::dsp::WindowingFunction<float> window;

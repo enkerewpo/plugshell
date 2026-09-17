@@ -42,6 +42,15 @@ public:
         repaint();
     }
 
+    /** Widens the panel past the default reading width. A list of shortcuts
+        wants a column; an analyser wants the whole window. */
+    void setPanelWidth(int w)
+    {
+        maxPanelWidth = w;
+        resized();
+        repaint();
+    }
+
     /** A note under the content, for context the controls cannot express. */
     void setFooter(juce::String f)
     {
@@ -154,7 +163,7 @@ public:
 private:
     juce::Rectangle<int> panelBounds() const
     {
-        const int w = juce::jmin(560, getWidth() - 80);
+        const int w = juce::jmin(maxPanelWidth, getWidth() - 80);
         const int h = content != nullptr
                           ? juce::jmin(contentHeight + (footer.isEmpty() ? 100 : 156), getHeight() - 80)
                           : juce::jmin(72 + rows.size() * 28 + 40, getHeight() - 80);
@@ -165,6 +174,7 @@ private:
     juce::Array<juce::StringArray> rows;
     std::unique_ptr<juce::Component> content;
     int contentHeight = 320;
+    int maxPanelWidth = 560;
     juce::String footer;
     juce::Colour colBase, colInk, colMute, colHair;
 };

@@ -196,6 +196,17 @@ public:
         repaint();
     }
 
+    static constexpr int rowHeight = 42;
+
+    /** How tall the strip needs to be at a given width.
+
+        Five buttons and two pieces of status do not fit across a narrow
+        window, and the previous answer -- drop whatever does not fit -- took
+        the Scope button with it, so the analyser became unreachable on any
+        plugin with a narrow editor. Wrapping to a second row keeps every
+        control present at every width, which is what a control strip is for. */
+    static int heightFor(int width) { return width < 620 ? rowHeight * 2 - 8 : rowHeight; }
+
     void showBack(bool b) { back.setVisible(b); }
 
     void setScopeOpen(bool on) { scope.setToggled(on); }
@@ -224,19 +235,34 @@ public:
         // independently positioned strings. Each piece drew itself wherever it
         // liked before, and any two of them collided as soon as the window was
         // narrow or a device name was long.
-        auto row = getLocalBounds();
-        row.removeFromRight(getWidth() - keys.getX()); // buttons own the right
-        if (back.isVisible())
-            row.removeFromLeft(back.getRight() + 12);
-        else
-            row.removeFromLeft(16);
-        row.removeFromRight(12);
+        // On two rows the text has a row to itself and needs no dodging; on
+        // one it has to keep clear of the buttons and of Back.
+        auto row = textRow;
+        if (!twoRows)
+        {
+            row = getLocalBounds();
+            row.removeFromRight(getWidth() - keys.getX()); // buttons own the right
+            if (back.isVisible())
+                row.removeFromLeft(back.getRight() + 12);
+            else
+                row.removeFromLeft(16);
+            row.removeFromRight(12);
+        }
 
         const bool playing = playedChord.isNotEmpty();
 
-        // Status on the left of what remains, device summary on the right, and
-        // the summary is dropped entirely when there is no room for it.
-        auto left = row.removeFromLeft(juce::jmax(0, row.getWidth() * 55 / 100));
+        // Status on the left of what remains, device summary on the right.
+        // The split follows what the status actually needs rather than a fixed
+        // share of the width, so a long device name cannot squeeze a short
+        // status into nothing, and a long status still yields once the summary
+        // is down to its shortest form.
+        g.setFont(theme::ui(theme::size::body));
+        const int statusWanted = juce::roundToInt(juce::GlyphArrangement::getStringWidth(
+                                     theme::ui(theme::size::body), playing ? playedChord : status)) +
+                                 12;
+
+        auto left = row.removeFromLeft(
+            juce::jlimit(0, row.getWidth(), juce::jmin(statusWanted, row.getWidth() * 70 / 100)));
 
         g.setColour(theme::ink);
         g.setFont(theme::ui(theme::size::body));
@@ -254,9 +280,18 @@ public:
             // fits, then the parts that matter most, and at the narrowest just
             // the latency, which is the number worth watching while playing.
             g.setColour(theme::mute);
-            g.setFont(theme::mono(theme::size::label));
 
-            const auto& text = row.getWidth() > 260 ? right : row.getWidth() > 150 ? rightMedium : rightShort;
+            // Measured against the space that is actually left, not against
+            // the width before the status took its share -- which is why the
+            // longest form used to be chosen and then truncated.
+            const auto fits = [&](const juce::String& t)
+            {
+                return juce::GlyphArrangement::getStringWidth(theme::mono(theme::size::label), t) <=
+                       (float) row.getWidth();
+            };
+
+            const auto& text = fits(right) ? right : fits(rightMedium) ? rightMedium : rightShort;
+            g.setFont(theme::mono(theme::size::label));
             g.drawText(text, row, juce::Justification::centredRight, true);
         }
     }
@@ -264,14 +299,36 @@ public:
     void resized() override
     {
         auto r = getLocalBounds();
-        settings.setBounds(r.removeFromRight(74));
-        help.setBounds(r.removeFromRight(56));
-        scope.setBounds(r.removeFromRight(72).reduced(4, 0));
-        keys.setBounds(r.removeFromRight(126).reduced(6, 0));
-        back.setBounds(8, 0, 56, getHeight());
+        twoRows = getHeight() >= rowHeight * 2 - 8;
+
+        auto buttons = twoRows ? r.removeFromBottom(rowHeight) : r;
+
+        // The keys button carries the octave number and wants the room, but
+        // not at the cost of pushing a whole button off a narrow strip.
+        const int keysWidth = getWidth() < 420 ? 104 : 126;
+
+        settings.setBounds(buttons.removeFromRight(74));
+        help.setBounds(buttons.removeFromRight(56));
+        scope.setBounds(buttons.removeFromRight(72).reduced(4, 0));
+        keys.setBounds(buttons.removeFromRight(keysWidth).reduced(6, 0));
+
+        if (twoRows)
+        {
+            // Back goes up with the status rather than competing with four
+            // other buttons for a narrow row, where it was left showing "B...".
+            back.setBounds(r.removeFromLeft(back.isVisible() ? 64 : 16).reduced(8, 0));
+            textRow = r.withTrimmedRight(16);
+        }
+        else
+        {
+            back.setBounds(buttons.removeFromLeft(64).reduced(8, 0));
+            textRow = juce::Rectangle<int>();
+        }
     }
 
 private:
+    bool twoRows = false;
+    juce::Rectangle<int> textRow;
     StripButton back{"Back"}, keys{"keys off"}, scope{"Scope"}, help{"Help"}, settings{"Settings"};
     juce::String status{"Select a plugin"}, right, rightMedium, rightShort, playedNotes, playedChord;
 };
@@ -323,6 +380,7 @@ public:
         addAndMakeVisible(strip);
 
         scopePanel = std::make_unique<ScopePanel>(tap, theme::base, theme::ink, theme::mute, theme::hair);
+        scopePanel->onClick = [this] { showScopeDetail(); };
         scopePanel->onExtentChanged = [this]
         {
             if (editor != nullptr)
@@ -361,9 +419,28 @@ public:
         const auto found = PluginIndex::scanDirectories();
         list.setItems(found);
         indexedCount = found.size();
-        strip.setStatus(juce::String(found.size()) + " plugins indexed", audioSummary());
+        setStripStatus(juce::String(found.size()) + " plugins indexed");
 
         setSize(920, 640);
+    }
+
+    /** The inline strip is a glance; this is the look. It covers the window
+        rather than growing it, so the size of the detailed view does not
+        depend on how much display is left over, and the keyboard keeps
+        playing underneath -- watching the trace while playing is the whole
+        reason to have it. */
+    void showScopeDetail()
+    {
+        auto o = std::make_unique<Overlay>("Analyser", theme::base, theme::ink, theme::mute, theme::hair);
+        o->setPanelWidth(juce::jmax(560, getWidth() - 60));
+
+        auto big = std::make_unique<ScopePanel>(tap, theme::base, theme::ink, theme::mute, theme::hair);
+        big->setDetailed(true);
+        big->setOpen(true);
+
+        o->setContent(std::move(big), juce::jmax(280, getHeight() - 220));
+        o->setFooter("Keys keep playing while this is open. esc to close.");
+        showOverlay(std::move(o));
     }
 
     /** Opens the analyser panel, for command-line and agent use. */
@@ -476,7 +553,7 @@ public:
         positionOverlay();
 
         auto r = getLocalBounds();
-        strip.setBounds(r.removeFromBottom(42));
+        strip.setBounds(r.removeFromBottom(stripHeight()));
 
         if (scopePanel != nullptr)
         {
@@ -484,6 +561,8 @@ public:
             scopePanel->setBounds(r.removeFromBottom(h));
             scopePanel->setVisible(h > 0);
         }
+        keepOnScreen();
+
         const auto la = listArea();
         viewport.setBounds(la);
         list.setSize(la.getWidth() - (viewport.isVerticalScrollBarShown() ? 10 : 0),
@@ -499,13 +578,18 @@ public:
     }
 
 private:
-    static constexpr int scopeHeight = 190;
+    // Small on purpose. The window grows by this much when the analyser
+    // opens, and on a laptop display a tall panel pushed the bottom of the
+    // window -- control strip included -- off the screen.
+    static constexpr int scopeHeight = 104;
 
     juce::Rectangle<int> contentArea() const
     {
         const int scopeTaken =
             scopePanel != nullptr ? juce::roundToInt(scopeHeight * scopePanel->getExtent()) : 0;
-        return getLocalBounds().withTrimmedTop(50).withTrimmedBottom(46 + scopeTaken);
+        return getLocalBounds()
+            .withTrimmedTop(headerHeight)
+            .withTrimmedBottom(stripHeight() + stripGap + scopeTaken);
     }
 
     /** The list gets margins; an embedded editor must not, or the window
@@ -548,6 +632,14 @@ private:
             overlay->removeFromDesktop();
             overlay.reset();
         }
+
+        // The overlay is its own window, so closing it leaves the main window
+        // unfocused and macOS spends the next click on activating it instead
+        // of on the button that was clicked. Take the focus back here so the
+        // strip responds to the first click rather than the second.
+        if (auto* top = getTopLevelComponent())
+            top->toFront(true);
+
         repaint();
     }
 
@@ -708,8 +800,7 @@ private:
             {
                 // A second key-down without a key-up means the release was
                 // lost. Retrigger rather than ignore.
-                sendNoteOff(sounding[c]);
-                sounding.remove(c);
+                releaseKey(c);
             }
 
             const int note = juce::jlimit(0, 127, octave * 12 + offset);
@@ -720,12 +811,29 @@ private:
         }
         else if (sounding.contains(c))
         {
-            sendNoteOff(sounding[c]);
-            sounding.remove(c);
+            releaseKey(c);
             updatePlaying();
         }
 
         return true;
+    }
+
+    /** Two keys can be the same note: the two octave rows overlap at the top,
+        so `,` and `q` are both C, as are `.` and `w`, `l` and `2`, `;` and `3`.
+        Releasing either of a held pair used to send a note-off that stopped
+        the other one too, and the key still being held then looked dead
+        because its note-down had already been answered. Only the last holder
+        of a pitch releases it. */
+    void releaseKey(int c)
+    {
+        const int note = sounding[c];
+        sounding.remove(c);
+
+        for (juce::HashMap<int, int>::Iterator it(sounding); it.next();)
+            if (it.getValue() == note)
+                return; // another key is still holding this note
+
+        sendNoteOff(note);
     }
 
     void sendNoteOff(int note)
@@ -824,12 +932,33 @@ private:
         return device != nullptr && device->getName().containsIgnoreCase("AirPods");
     }
 
-    juce::String audioSummary() const
+    /** Three lengths of the same fact. The strip picks whichever fits, so the
+        summary shortens rather than ending in an ellipsis: the shorter forms
+        were never supplied before, which left every caller handing over one
+        long string for the strip to cut in half. */
+    struct AudioSummary
     {
-        if (auto* d = devices.getCurrentAudioDevice())
-            return d->getName() + "  " + juce::String(juce::roundToInt(d->getCurrentSampleRate())) +
-                   " Hz  ·  " + juce::String(juce::MidiInput::getAvailableDevices().size()) + " midi in";
-        return "no audio device";
+        juce::String full, medium, brief;
+    };
+
+    AudioSummary audioSummary() const
+    {
+        auto* d = devices.getCurrentAudioDevice();
+        if (d == nullptr)
+            return {"no audio device", "no audio", "no audio"};
+
+        const auto rate = juce::String(juce::roundToInt(d->getCurrentSampleRate() / 1000.0)) + "k";
+        const auto midi = juce::String(juce::MidiInput::getAvailableDevices().size());
+
+        return {d->getName() + "  " + juce::String(juce::roundToInt(d->getCurrentSampleRate())) + " Hz  ·  " +
+                    midi + " midi in",
+                d->getName() + "  " + rate, rate + "  ·  " + midi + " midi"};
+    }
+
+    void setStripStatus(juce::String text)
+    {
+        const auto s = audioSummary();
+        strip.setStatus(std::move(text), s.full, s.medium, s.brief);
     }
 
     /** Sizes the window to the editor, scaling down only if the editor is
@@ -848,17 +977,6 @@ private:
 
         const auto work = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
 
-        const int wantW = editor->getWidth();
-        const int wantH = editor->getHeight() + chromeHeight;
-
-        const double fit = juce::jmin(1.0, (double) (work.getWidth() - 40) / (double) wantW,
-                                      (double) (work.getHeight() - 60) / (double) wantH);
-
-        editorScale = fit;
-        editor->setTransform(fit < 1.0 ? juce::AffineTransform::scale((float) fit) : juce::AffineTransform());
-
-        // setContentOwned(c, true) makes the window track the content's size,
-        // so resize this component rather than the window.
         // Follows the animation rather than the switch: keying this off
         // isOpen() made the window jump to its final height on the first frame
         // while the panel was still growing, which reads as content dropping
@@ -866,8 +984,60 @@ private:
         const int scopeTaken =
             scopePanel != nullptr ? juce::roundToInt(scopeHeight * scopePanel->getExtent()) : 0;
 
-        setSize(juce::roundToInt(wantW * fit),
-                juce::roundToInt(editor->getHeight() * fit) + chromeHeight + scopeTaken);
+        const int availW = work.getWidth() - 40;
+        const int availH = work.getHeight() - 60;
+
+        // The chrome is what the editor does not get, and it has to be taken
+        // out before the scale is worked out rather than added on after. It
+        // was added on after, so opening the analyser pushed the bottom of the
+        // window past the bottom of the display, taking the control strip --
+        // and the only button that closes the analyser again -- with it.
+        int chrome =
+            headerHeight + ControlStrip::heightFor(juce::jmin(editor->getWidth(), availW)) + stripGap;
+        double fit = 1.0;
+
+        // Twice, because the strip wraps to a second row on a narrow window,
+        // which changes the chrome height, which changes the scale.
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            fit = juce::jlimit(
+                0.2, 1.0,
+                juce::jmin((double) availW / (double) editor->getWidth(),
+                           (double) (availH - chrome - scopeTaken) / (double) editor->getHeight()));
+            chrome =
+                headerHeight + ControlStrip::heightFor(juce::roundToInt(editor->getWidth() * fit)) + stripGap;
+        }
+
+        editorScale = fit;
+        editor->setTransform(fit < 1.0 ? juce::AffineTransform::scale((float) fit) : juce::AffineTransform());
+
+        // setContentOwned(c, true) makes the window track the content's size,
+        // so resize this component rather than the window.
+        setSize(juce::roundToInt(editor->getWidth() * fit),
+                juce::roundToInt(editor->getHeight() * fit) + chrome + scopeTaken);
+    }
+
+    /** The window is sized to the plugin rather than to the display, so it can
+        still end up hanging off an edge -- after a plugin resizes itself, or
+        after the analyser opens on a short screen. A window whose bottom is
+        off-screen has no reachable control strip, which is how the analyser
+        became impossible to close. */
+    void keepOnScreen()
+    {
+        auto* top = getTopLevelComponent();
+        if (top == nullptr || top == this)
+            return;
+
+        const auto work = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
+        const auto b = top->getScreenBounds();
+
+        const int x =
+            juce::jlimit(work.getX(), juce::jmax(work.getX(), work.getRight() - b.getWidth()), b.getX());
+        const int y =
+            juce::jlimit(work.getY(), juce::jmax(work.getY(), work.getBottom() - b.getHeight()), b.getY());
+
+        if (x != b.getX() || y != b.getY())
+            top->setTopLeftPosition(x, y);
     }
 
     void finishLoading()
@@ -895,7 +1065,7 @@ private:
         loadedName = {};
         viewport.setVisible(true);
         strip.showBack(false);
-        strip.setStatus("Select a plugin", audioSummary());
+        setStripStatus("Select a plugin");
         repaint();
     }
 
@@ -909,7 +1079,7 @@ private:
         viewport.setVisible(false);
         setMouseCursor(juce::MouseCursor::WaitCursor);
         startTimerHz(30);
-        strip.setStatus("Loading " + p.name + "...", audioSummary());
+        setStripStatus("Loading " + p.name + "...");
         repaint();
 
         // Hand the blocking work back to the message loop so the loading
@@ -936,7 +1106,7 @@ private:
         {
             finishLoading();
             viewport.setVisible(true);
-            strip.setStatus("Could not read " + p.name, audioSummary());
+            setStripStatus("Could not read " + p.name);
             return;
         }
 
@@ -947,7 +1117,7 @@ private:
         {
             finishLoading();
             viewport.setVisible(true);
-            strip.setStatus("Failed: " + error, audioSummary());
+            setStripStatus("Failed: " + error);
             return;
         }
 
@@ -974,7 +1144,7 @@ private:
 
         player.setProcessor(instance.get());
 
-        strip.setStatus(juce::String(instance->getParameters().size()) + " parameters", audioSummary());
+        setStripStatus(juce::String(instance->getParameters().size()) + " parameters");
         repaint();
     }
 
@@ -985,7 +1155,11 @@ private:
     juce::AudioPluginFormatManager formats;
     std::unique_ptr<juce::AudioPluginInstance> instance;
     std::unique_ptr<juce::AudioProcessorEditor> editor;
-    static constexpr int chromeHeight = 50 + 46;
+    static constexpr int headerHeight = 50;
+    static constexpr int stripGap = 4;
+
+    int stripHeight() const { return ControlStrip::heightFor(getWidth()); }
+    int chromeHeight() const { return headerHeight + stripHeight() + stripGap; }
     double editorScale = 1.0;
     bool fitting = false;
     bool keysEnabled = false;
