@@ -182,6 +182,26 @@ bool EditorProbe::hasScreenRecordingPermission()
     return true;
 }
 
+void EditorProbe::attachAsChildWindow(juce::Component& child, juce::Component& parent)
+{
+    NSView* childView = hostViewFor(child);
+    NSView* parentView = hostViewFor(parent);
+
+    if (childView == nil || parentView == nil)
+        return;
+
+    NSWindow* childWindow = [childView window];
+    NSWindow* parentWindow = [parentView window];
+
+    if (childWindow == nil || parentWindow == nil || childWindow == parentWindow)
+        return;
+
+    // Normal level, then parented. Leaving it floating is what put this panel
+    // over every other application on the machine.
+    [childWindow setLevel:NSNormalWindowLevel];
+    [parentWindow addChildWindow:childWindow ordered:NSWindowAbove];
+}
+
 bool EditorProbe::hasAccessibilityPermission() { return AXIsProcessTrusted(); }
 
 bool EditorProbe::requestAccessibilityPermission()

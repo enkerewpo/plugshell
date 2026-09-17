@@ -13,6 +13,7 @@
 #include "ControlServer.h"
 #include "EditorProbe.h"
 #include "KeyMonitor.h"
+#include "OfflineRender.h"
 #include "Overlay.h"
 #include "PluginIndex.h"
 #include "QwertyKeys.h"
@@ -371,7 +372,10 @@ public:
     juce::Font getTextButtonFont(juce::TextButton&, int) override { return theme::ui(13.0f); }
 };
 
-class MainComponent : public juce::Component, private juce::ComponentListener, private juce::Timer
+class MainComponent : public juce::Component,
+                      private juce::ComponentListener,
+                      private juce::ChangeListener,
+                      private juce::Timer
 {
 public:
     MainComponent()
@@ -414,6 +418,7 @@ public:
         };
 
         startAudio();
+        devices.addChangeListener(this);
 
         // Watched at the platform layer rather than through focus: a plugin
         // editor is a native view, so once the user clicks inside it the host's
@@ -626,6 +631,52 @@ public:
                 {
                     o.setProperty("currentProgram", instance->getCurrentProgram());
                     o.setProperty("name", instance->getProgramName(instance->getCurrentProgram()));
+                });
+        }
+
+        if (op == "render")
+        {
+            const auto path = request.getProperty("path", "").toString();
+            if (path.isEmpty())
+                return error("render needs a path");
+
+            OfflineRender::Options o;
+            o.sampleRate = (double) request.getProperty("sampleRate", 48000.0);
+            o.blockSize = (int) request.getProperty("blockSize", 512);
+            o.durationSec = (double) request.getProperty("durationSec", 2.0);
+            o.note = (int) request.getProperty("note", 60);
+            o.velocity = (float) (double) request.getProperty("velocity", 0.8);
+            o.noteOffSec = (double) request.getProperty("noteOffSec", 1.0);
+
+            const auto in = request.getProperty("input", "").toString();
+            if (in.isNotEmpty())
+                o.input = juce::File(in);
+
+            // Detached first: the plugin cannot be driven by the device and
+            // rendered offline at the same time, and leaving the player
+            // attached would have the audio thread calling processBlock on an
+            // instance being prepared for another sample rate underneath it.
+            player.setProcessor(nullptr);
+
+            auto* device = devices.getCurrentAudioDevice();
+            const auto r = OfflineRender::run(
+                *instance, juce::File(path), o, device != nullptr ? device->getCurrentSampleRate() : 48000.0,
+                device != nullptr ? device->getCurrentBufferSizeSamples() : 512);
+
+            player.setProcessor(instance.get());
+
+            if (!r.ok)
+                return error(r.error);
+
+            return okWith(
+                [&r, &path](juce::DynamicObject& o)
+                {
+                    o.setProperty("path", path);
+                    o.setProperty("channels", r.channels);
+                    o.setProperty("frames", (juce::int64) r.frames);
+                    o.setProperty("peak", r.peak);
+                    o.setProperty("rms", r.rms);
+                    o.setProperty("renderedInSec", r.renderedInSec);
                 });
         }
 
@@ -942,9 +993,14 @@ private:
         overlay->setOpaque(false);
         overlay->addToDesktop(juce::ComponentPeer::windowIsTemporary |
                               juce::ComponentPeer::windowIgnoresKeyPresses * 0);
-        overlay->setAlwaysOnTop(true);
         positionOverlay();
         overlay->setVisible(true);
+
+        // Parented rather than always-on-top. Always-on-top is a property of
+        // the whole machine, not of this application, so it floated the panel
+        // over every other window the user had open.
+        EditorProbe::attachAsChildWindow(*overlay, *this);
+
         overlay->toFront(true);
         overlay->grabKeyboardFocus();
     }
@@ -1459,9 +1515,17 @@ private:
 
     void setStripStatus(juce::String text)
     {
+        lastStatus = std::move(text);
         const auto s = audioSummary();
-        strip.setStatus(std::move(text), s.full, s.medium, s.brief);
+        strip.setStatus(lastStatus, s.full, s.medium, s.brief);
     }
+
+    /** The device summary is only true until the device changes, and it
+        changes without anything here being asked -- headphones connect, a
+        interface is unplugged. Refreshing it on the manager's own change
+        message is the only way the strip does not go on naming a device that
+        is no longer playing anything. */
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { setStripStatus(lastStatus); }
 
     /** Sizes the window to the editor, scaling down only if the editor is
         larger than the display. Plugin editors have a designed size and
@@ -1685,6 +1749,7 @@ private:
     bool loading = false;
     double spinner = 0.0;
     juce::String loadingName;
+    juce::String lastStatus;
     int indexedCount = 0;
     std::unique_ptr<Overlay> overlay;
     juce::HashMap<int, int> sounding; ///< character -> sounding note

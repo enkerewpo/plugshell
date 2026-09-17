@@ -23,6 +23,7 @@ target_compile_definitions(plugshell_app PRIVATE
 
 target_link_libraries(plugshell_app PRIVATE
     juce::juce_dsp
+    juce::juce_audio_formats
     juce::juce_audio_processors
     juce::juce_audio_utils
     juce::juce_gui_basics

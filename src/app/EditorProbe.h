@@ -56,6 +56,17 @@ public:
     static CaptureResult capture(juce::Component& component, const juce::File& destination,
                                  CaptureMethod method = CaptureMethod::automatic);
 
+    /** Makes `child`'s window a child of `parent`'s.
+
+        A panel that has to appear over an embedded plugin editor cannot be
+        drawn by the framework, because the editor is a native view that
+        composites above anything drawn in the same window. It therefore has
+        to be a window of its own -- and a window of its own, marked always on
+        top, floats above every other application on the machine, not just
+        above this one. A child window stays above its parent and travels with
+        it while the pair behaves normally against everything else. */
+    static void attachAsChildWindow(juce::Component& child, juce::Component& parent);
+
     /** Whether Screen Recording has already been granted. Does not prompt. */
     static bool hasScreenRecordingPermission();
 
