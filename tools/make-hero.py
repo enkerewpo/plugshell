@@ -107,7 +107,7 @@ def main():
     out_path = Path(sys.argv[2] if len(sys.argv) > 2 else ROOT / "assets" / "hero.png")
 
     header_h = 124
-    card_h = 140
+    card_h = 22 + 22 + 18 + 20 * 2 + 22  # inset, icon row, gap, two lines, inset
     agents_h = 76
     shot_w = 660
 
@@ -131,7 +131,7 @@ def main():
     d.text(at(left, 48), "plugshell", font=font(42), fill=INK, anchor="lm")
     d.text(
         at(left, 84),
-        "a host that lets a program work an audio plugin",
+        "a host that lets an agent work an audio plugin",
         font=font(20),
         fill=MUTE,
         anchor="lm",
@@ -150,9 +150,18 @@ def main():
         ("list-ordered", "universal preset", "a patch as operations,\nnot a binary blob"),
     ]
 
+    # One padding everywhere, one baseline grid. The icon sat alone above the
+    # title with a gap that belonged to neither of them, and the note crowded
+    # the bottom edge -- three different margins in a box 290 wide.
+    inset = 22
     gap = 16
     card_w = (WIDTH - PAD * 2 - gap * (len(claims) - 1)) / len(claims)
     top = header_h
+
+    icon_size = 22
+    title = font(20)
+    body = font(14)
+    leading = 20
 
     for i, (icon, name, note) in enumerate(claims):
         x = PAD + (card_w + gap) * i
@@ -161,13 +170,21 @@ def main():
             [at(x, top), at(x + card_w, top + card_h)], 12 * SCALE, fill=CARD, outline=HAIR, width=SCALE
         )
 
-        glyph = svg(icon, 26, "#1a1a19", stroke=True)
-        canvas.paste(glyph, at(x + 24, top + 22), glyph)
+        # Mark and name on one line, because they name the same thing. Stacked,
+        # the icon reads as a separate element that happens to be nearby.
+        row = top + inset + icon_size / 2
 
-        d.text(at(x + 24, top + 76), name, font=font(21), fill=INK, anchor="lm")
-        d.multiline_text(
-            at(x + 24, top + 94), note, font=font(14), fill=MUTE, spacing=7 * SCALE, anchor="la"
-        )
+        glyph = svg(icon, icon_size, "#1a1a19", stroke=True)
+        canvas.paste(glyph, at(x + inset, row - icon_size / 2), glyph)
+
+        d.text(at(x + inset + icon_size + 11, row), name, font=title, fill=INK, anchor="lm")
+
+        # The note starts a full line below the row, and every line sits on the
+        # same leading, so two cards with different wording still line up.
+        note_top = row + icon_size / 2 + 18
+
+        for n, line in enumerate(note.split("\n")):
+            d.text(at(x + inset, note_top + n * leading), line, font=body, fill=MUTE, anchor="la")
 
     # ---------------------------------------------------------- the agents
     #

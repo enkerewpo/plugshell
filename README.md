@@ -2,7 +2,7 @@
 
 # plugshell
 
-**A host that lets a program work an audio plugin.**
+**A host that lets an agent work an audio plugin.**
 
 Not only read its parameters — see its editor, click the controls that are not
 parameters, render it to audio, and describe a patch as a sequence of
