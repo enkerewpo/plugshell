@@ -62,7 +62,7 @@ public:
 
         if (hoverAmount > 0.001f)
         {
-            g.setColour(ink.withAlpha(0.12f * hoverAmount));
+            g.setColour(ink.withAlpha(0.16f * hoverAmount));
             g.fillRoundedRectangle(pill, 5.0f);
         }
 
@@ -106,11 +106,11 @@ public:
 private:
     Eased hover{0.0f}, lit{0.0f};
 
-    // Faster than the panels: a button should feel like it responded, not
-    // like it is playing an animation at you.
+    // Fast, but not so fast that it may as well not be there: at 0.38 the
+    // whole crossfade was over in five frames and read as an instant switch.
     Animator anim{[this]
                   {
-                      const bool moving = hover.advance(0.38f) | lit.advance(0.38f);
+                      const bool moving = hover.advance(0.20f) | lit.advance(0.24f);
                       if (moving)
                           repaint();
                       return moving;

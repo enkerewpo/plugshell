@@ -35,8 +35,6 @@ public:
     {
         setWantsKeyboardFocus(true);
         appear.snapTo(0.0f);
-        appear.setTarget(1.0f);
-        anim.nudge();
     }
 
     void setRows(juce::Array<juce::StringArray> r)
@@ -77,6 +75,21 @@ public:
     /** Called back when a dismissal has finished fading, so the owner can
         let go of the window rather than removing it mid-fade. */
     std::function<void()> onFadedOut;
+
+    /** Started once the window is actually on screen, not in the constructor.
+
+        Beginning it at construction meant the first frames of the fade ran
+        while the window was still being created and laid out, so by the time
+        anything was visible the alpha had already jumped most of the way and
+        the rest arrived in two steps. Closing looked smooth because by then
+        there was nothing left to set up. */
+    void beginFadeIn()
+    {
+        appear.snapTo(0.0f);
+        setAlpha(0.0f);
+        appear.setTarget(1.0f);
+        anim.nudge();
+    }
 
     /** Starts the panel on its way out. It is not gone until onFadedOut. */
     void beginFadeOut()
@@ -182,15 +195,10 @@ public:
     }
 
 private:
+    // Fade only. The panel sits where it sits; sliding it in from below said
+    // it had come from the bottom of the window, which is not where it came
+    // from and not something worth animating.
     juce::Rectangle<int> panelBounds() const
-    {
-        // Rises the last few pixels as it fades in. Enough to read as arriving
-        // from somewhere; not enough to be watched.
-        const int lift = juce::roundToInt((1.0f - appear.get()) * 10.0f);
-        return restingPanelBounds().translated(0, lift);
-    }
-
-    juce::Rectangle<int> restingPanelBounds() const
     {
         const int w = juce::jmin(maxPanelWidth, getWidth() - 80);
         const int h = content != nullptr
@@ -204,7 +212,7 @@ private:
 
     Animator anim{[this]
                   {
-                      const bool moving = appear.advance(0.26f);
+                      const bool moving = appear.advance(0.36f);
 
                       if (moving)
                       {

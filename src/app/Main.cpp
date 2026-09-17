@@ -399,6 +399,18 @@ public:
         setColour(juce::ListBox::textColourId, theme::ink);
     }
 
+    /** JUCE opens a menu by putting its window on screen, fully drawn, in one
+        frame. This is the hook it offers just before that happens, which is
+        the only place a fade can be started without reimplementing the menu.
+
+        Short on purpose: a menu is opened to be read, and anything long
+        enough to notice is time spent not reading it. */
+    void preparePopupMenuWindow(juce::Component& window) override
+    {
+        window.setAlpha(0.0f);
+        juce::Desktop::getInstance().getAnimator().fadeIn(&window, 80);
+    }
+
     /** JUCE sizes its widgets for a light desktop app and they read as
         oversized next to the rest of this interface. */
     juce::Font getLabelFont(juce::Label&) override { return theme::ui(13.0f); }
@@ -441,6 +453,13 @@ public:
         strip.onSettings = [this] { showSettings(); };
         strip.onScope = [this]
         {
+            // An editor that already fills the display has no room to grow
+            // into, and growing anyway only clips it -- so for those the
+            // analyser opens over the whole window instead of under it. Same
+            // button, same instrument, the one that fits.
+            if (!scopePanel->isOpen() && editor != nullptr && !roomForInlineScope())
+                return showScopeDetail();
+
             const bool willOpen = !scopePanel->isOpen();
             scopePanel->setOpen(willOpen);
             strip.setScopeOpen(willOpen);
@@ -469,6 +488,18 @@ public:
         setStripStatus(juce::String(found.size()) + " plugins indexed");
 
         setSize(920, 640);
+    }
+
+    /** Whether the window can grow by the analyser's height without the
+        editor losing anything off the bottom of the display. */
+    bool roomForInlineScope() const
+    {
+        if (editor == nullptr)
+            return true;
+
+        const auto work =
+            juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt();
+        return editor->getHeight() + chromeHeight() + scopeHeight <= work.getHeight() - 60;
     }
 
     /** The inline strip is a glance; this is the look. It covers the window
@@ -865,6 +896,9 @@ public:
     /** Opens the analyser panel, for command-line and agent use. */
     void openScope()
     {
+        if (editor != nullptr && !roomForInlineScope())
+            return showScopeDetail();
+
         if (scopePanel != nullptr && !scopePanel->isOpen())
         {
             scopePanel->setOpen(true);
@@ -1040,6 +1074,11 @@ private:
 
         overlay->toFront(true);
         overlay->grabKeyboardFocus();
+
+        // After the window exists, is positioned and has been drawn once.
+        // Fading something that is still being built animates the setup cost
+        // rather than the panel.
+        overlay->beginFadeIn();
     }
 
     void positionOverlay()
@@ -1691,34 +1730,26 @@ private:
         const int availW = work.getWidth() - 40;
         const int availH = work.getHeight() - 60;
 
-        // The chrome is what the editor does not get, and it has to be taken
-        // out before the scale is worked out rather than added on after. It
-        // was added on after, so opening the analyser pushed the bottom of the
-        // window past the bottom of the display, taking the control strip --
-        // and the only button that closes the analyser again -- with it.
-        int chrome =
+        const int chrome =
             headerHeight + ControlStrip::heightFor(juce::jmin(editor->getWidth(), availW)) + stripGap;
-        double fit = 1.0;
 
-        // Twice, because the strip wraps to a second row on a narrow window,
-        // which changes the chrome height, which changes the scale.
-        for (int pass = 0; pass < 2; ++pass)
-        {
-            fit = juce::jlimit(
-                0.2, 1.0,
-                juce::jmin((double) availW / (double) editor->getWidth(),
-                           (double) (availH - chrome - scopeTaken) / (double) editor->getHeight()));
-            chrome =
-                headerHeight + ControlStrip::heightFor(juce::roundToInt(editor->getWidth() * fit)) + stripGap;
-        }
+        // No scaling. A plugin's editor is a native view: giving it a smaller
+        // frame does not make it draw smaller, it makes it draw the same
+        // picture and lose the right and bottom of it. The transform that used
+        // to be applied here was producing exactly that, which only became
+        // visible once the analyser made the scale drop well below one.
+        //
+        // Plugins big enough to need it have their own zoom control, and that
+        // one actually works, because the plugin does the scaling itself.
+        editorScale = 1.0;
+        editor->setTransform({});
 
-        editorScale = fit;
-        editor->setTransform(fit < 1.0 ? juce::AffineTransform::scale((float) fit) : juce::AffineTransform());
+        const int wantW = editor->getWidth();
+        const int wantH = editor->getHeight() + chrome + scopeTaken;
 
-        // setContentOwned(c, true) makes the window track the content's size,
-        // so resize this component rather than the window.
-        setSize(juce::roundToInt(editor->getWidth() * fit),
-                juce::roundToInt(editor->getHeight() * fit) + chrome + scopeTaken);
+        editorTooBig = wantW > availW || editor->getHeight() + chrome > availH;
+
+        setSize(juce::jmin(wantW, availW), juce::jmin(wantH, availH));
     }
 
     /** The window is sized to the plugin rather than to the display, so it can
@@ -1903,6 +1934,7 @@ private:
     int chromeHeight() const { return headerHeight + stripHeight() + stripGap; }
     double editorScale = 1.0;
     bool fitting = false;
+    bool editorTooBig = false;
     bool keysEnabled = false;
     int octave = 4;
     bool loading = false;

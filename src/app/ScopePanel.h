@@ -246,9 +246,37 @@ private:
         bool started = false;
         for (int x = 0; x < plot.getWidth(); ++x)
         {
-            const double f = xToFreq((float) x / (float) juce::jmax(1, plot.getWidth()), rate);
-            const int bin = juce::jlimit(0, (int) magnitudes.size() - 1, (int) (f * fftSize / rate));
-            const float db = magnitudes[(size_t) bin];
+            const int w = juce::jmax(1, plot.getWidth());
+            const double f = xToFreq((float) x / (float) w, rate);
+            const double fNext = xToFreq((float) (x + 1) / (float) w, rate);
+
+            // A log frequency axis spreads the low bins over many pixels and
+            // crams the high ones into a fraction of a pixel, so one bin per
+            // pixel gives a staircase at the bottom and aliasing at the top.
+            // Below a bin per pixel, interpolate between neighbours; above it,
+            // take the loudest bin in the span, which is what a peak reading
+            // should do and is stable while the display slews.
+            const double binF = f * fftSize / rate;
+            const double binNext = fNext * fftSize / rate;
+            const int last = (int) magnitudes.size() - 1;
+
+            float db;
+
+            if (binNext - binF < 1.0)
+            {
+                const int lo = juce::jlimit(0, last, (int) binF);
+                const int hi = juce::jlimit(0, last, lo + 1);
+                const float t = (float) (binF - (double) lo);
+                db = magnitudes[(size_t) lo] * (1.0f - t) + magnitudes[(size_t) hi] * t;
+            }
+            else
+            {
+                db = -100.0f;
+                for (int b = juce::jlimit(0, last, (int) binF); b <= juce::jlimit(0, last, (int) binNext);
+                     ++b)
+                    db = juce::jmax(db, magnitudes[(size_t) b]);
+            }
+
             const float y = juce::jmap(juce::jlimit(-90.0f, 0.0f, db), -90.0f, 0.0f, (float) plot.getBottom(),
                                        (float) plot.getY());
 
