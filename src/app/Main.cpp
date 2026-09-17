@@ -6,9 +6,11 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <cstdio>
+#include <iostream>
 
 #include "AnalyserTap.h"
 #include "ChordName.h"
+#include "EditorProbe.h"
 #include "KeyMonitor.h"
 #include "Overlay.h"
 #include "PluginIndex.h"
@@ -443,6 +445,28 @@ public:
         o->setContent(std::move(big), juce::jmax(280, getHeight() - 220));
         o->setFooter("Keys keep playing while this is open. esc to close.");
         showOverlay(std::move(o));
+    }
+
+    /** Writes a PNG of the plugin's editor exactly as it appears on screen.
+
+        The point of this is that a parameter list is not the plugin. Which
+        wavetable is selected, what the modulation matrix routes where, which
+        page is showing -- none of it is a parameter, all of it is on screen,
+        and an image is the only representation that contains it. */
+    juce::String captureEditor(const juce::File& destination)
+    {
+        if (editor == nullptr)
+            return "no editor is open";
+
+        const auto r = EditorProbe::capture(*editor, destination);
+
+        if (!r.ok)
+            return "capture failed: " + r.error;
+
+        return "captured " + juce::String(r.width) + "x" + juce::String(r.height) + " at " +
+               juce::String(r.scale, 2) + "x via " +
+               (r.used == EditorProbe::CaptureMethod::viewCache ? "view cache" : "window server") + " -> " +
+               destination.getFullPathName();
     }
 
     /** Opens the analyser panel, for command-line and agent use. */
@@ -1007,7 +1031,8 @@ private:
         // in here; without this guard the two chase each other.
         const juce::ScopedValueSetter<bool> guard(fitting, true);
 
-        const auto work = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
+        const auto work =
+            juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt();
 
         // Follows the animation rather than the switch: keying this off
         // isOpen() made the window jump to its final height on the first frame
@@ -1060,7 +1085,8 @@ private:
         if (top == nullptr || top == this)
             return;
 
-        const auto work = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userArea;
+        const auto work =
+            juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt();
         const auto b = top->getScreenBounds();
 
         const int x =
@@ -1254,6 +1280,24 @@ public:
 
         if (tokens.contains("--scope"))
             main->openScope();
+
+        // Capture has to wait for the editor to exist and to have drawn at
+        // least once; a plugin that opens its window and then loads its skin
+        // photographs as an empty rectangle if asked immediately.
+        const auto cap = tokens.indexOf("--capture");
+        if (cap >= 0 && cap + 1 < tokens.size())
+        {
+            const juce::File out(tokens[cap + 1]);
+            const bool quit = tokens.contains("--quit-after");
+
+            juce::Timer::callAfterDelay(2500,
+                                        [main, out, quit]
+                                        {
+                                            std::cout << main->captureEditor(out) << std::endl;
+                                            if (quit)
+                                                juce::JUCEApplication::getInstance()->systemRequestedQuit();
+                                        });
+        }
     }
     void shutdown() override { window.reset(); }
 

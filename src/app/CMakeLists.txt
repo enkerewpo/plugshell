@@ -10,8 +10,8 @@ juce_add_gui_app(plugshell_app
 target_sources(plugshell_app PRIVATE Main.cpp)
 
 if(APPLE)
-    target_sources(plugshell_app PRIVATE KeyMonitorMac.mm)
-    target_link_libraries(plugshell_app PRIVATE "-framework Cocoa")
+    target_sources(plugshell_app PRIVATE KeyMonitorMac.mm EditorProbeMac.mm)
+    target_link_libraries(plugshell_app PRIVATE "-framework Cocoa" "-framework CoreGraphics")
 endif()
 
 target_compile_definitions(plugshell_app PRIVATE

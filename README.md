@@ -8,7 +8,7 @@ An agent-operable host for audio plugins.
 
 It runs two ways: as a standalone macOS application for studying a plugin on its own, and as a plugin itself, so the same interface is available inside a DAW with real signal flowing through it.
 
-> **Status: early, and it runs.** The macOS application loads VST3 plugins, hosts their editors, plays them from the computer keyboard, and shows what the output looks like. The parts that make it agent-operable — editor capture, synthetic input, the RPC surface — are not built yet, and one of them is still unproven. See [Roadmap](#roadmap).
+> **Status: early, and it runs.** The macOS application loads VST3 plugins, hosts their editors, plays them from the computer keyboard, and shows what the output looks like. **Editor capture works** — verified against Pigments and Analog Lab V at full Retina resolution, including GPU-drawn content, without needing Screen Recording permission. Synthetic input is written but not yet verified, and the RPC surface is not built. See [Roadmap](#roadmap).
 
 ---
 
