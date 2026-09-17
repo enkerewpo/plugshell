@@ -3,8 +3,10 @@
 
 #include "EditorProbe.h"
 
+#import <ApplicationServices/ApplicationServices.h>
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
 
 namespace plugshell
 {
@@ -77,6 +79,85 @@ bool looksBlank(NSBitmapImageRep* rep)
     return true;
 }
 
+/** Reads back what the window server composited for one window.
+
+    This replaces CGWindowListCreateImage, which macOS 15 removed, and it is
+    needed far more often than it first appeared. A plugin editor can be
+    perfectly readable through the view cache while it is starting up and
+    become opaque to it seconds later, once the plugin finishes initialising
+    and moves its drawing onto the GPU. Pigments does exactly that: a capture
+    four seconds after loading succeeds, and the same capture at seven seconds
+    does not.
+
+    Both calls are asynchronous and are waited on, with timeouts, because the
+    caller wants an image rather than a callback. */
+API_AVAILABLE(macos(14.0))
+CGImageRef captureWindowComposited(CGWindowID windowID, juce::String& error)
+{
+    __block SCWindow* target = nil;
+    dispatch_semaphore_t found = dispatch_semaphore_create(0);
+
+    [SCShareableContent
+        getShareableContentExcludingDesktopWindows:NO
+                               onScreenWindowsOnly:NO
+                                 completionHandler:^(SCShareableContent* content, NSError* e) {
+                                     if (e == nil)
+                                         for (SCWindow* w in content.windows)
+                                             if (w.windowID == windowID)
+                                             {
+                                                 target = w;
+                                                 break;
+                                             }
+                                     dispatch_semaphore_signal(found);
+                                 }];
+
+    if (dispatch_semaphore_wait(found, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC))) != 0)
+    {
+        error = "timed out asking the window server what it can share";
+        return nullptr;
+    }
+
+    if (target == nil)
+    {
+        error = "the window server does not list this window; Screen Recording permission is "
+                "probably not granted";
+        return nullptr;
+    }
+
+    SCContentFilter* filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
+
+    SCStreamConfiguration* config = [[SCStreamConfiguration alloc] init];
+    config.width = (size_t)(target.frame.size.width * 2.0);
+    config.height = (size_t)(target.frame.size.height * 2.0);
+    config.showsCursor = NO;
+    config.captureResolution = SCCaptureResolutionBest;
+
+    __block CGImageRef image = nullptr;
+    __block juce::String failure;
+    dispatch_semaphore_t shot = dispatch_semaphore_create(0);
+
+    [SCScreenshotManager captureImageWithFilter:filter
+                                  configuration:config
+                              completionHandler:^(CGImageRef sample, NSError* e) {
+                                  if (sample != nullptr)
+                                      image = CGImageRetain(sample);
+                                  else if (e != nil)
+                                      failure = juce::String::fromUTF8([[e localizedDescription] UTF8String]);
+                                  dispatch_semaphore_signal(shot);
+                              }];
+
+    if (dispatch_semaphore_wait(shot, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC))) != 0)
+    {
+        error = "timed out waiting for the screenshot";
+        return nullptr;
+    }
+
+    if (image == nullptr)
+        error = failure.isNotEmpty() ? failure : "the window server returned no image";
+
+    return image;
+}
+
 bool writePNG(CGImageRef image, const juce::File& destination)
 {
     if (image == nullptr)
@@ -93,10 +174,26 @@ bool writePNG(CGImageRef image, const juce::File& destination)
 
 } // namespace
 
-bool EditorProbe::canUseWindowServer()
+bool EditorProbe::hasScreenRecordingPermission()
 {
     if (@available(macOS 10.15, *))
         return CGPreflightScreenCaptureAccess();
+
+    return true;
+}
+
+bool EditorProbe::hasAccessibilityPermission() { return AXIsProcessTrusted(); }
+
+bool EditorProbe::requestAccessibilityPermission()
+{
+    NSDictionary* options = @{(__bridge id)kAXTrustedCheckOptionPrompt : @YES};
+    return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+}
+
+bool EditorProbe::requestScreenRecordingPermission()
+{
+    if (@available(macOS 10.15, *))
+        return CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess();
 
     return true;
 }
@@ -160,25 +257,54 @@ EditorProbe::CaptureResult EditorProbe::capture(juce::Component& component, cons
     // Read back what was actually composited. This is the only method that
     // works for an editor drawn by OpenGL or Metal, which most modern synths
     // use for at least their spectrum and wavetable displays.
-    if (!canUseWindowServer())
+
+    result.used = CaptureMethod::windowServer;
+
+    if (@available(macOS 14.0, *))
     {
-        result.error = "Screen Recording permission is needed to capture a GPU-drawn editor; "
-                       "grant it in System Settings > Privacy & Security > Screen Recording";
+        juce::String why;
+        CGImageRef whole = captureWindowComposited((CGWindowID)[[view window] windowNumber], why);
+
+        if (whole == nullptr)
+        {
+            result.error = why;
+            return result;
+        }
+
+        // The image covers the window's frame in backing pixels, so the crop
+        // is scaled, and measured from the top rather than from the Cocoa
+        // baseline the rest of this file works in.
+        const NSRect frame = [[view window] frame];
+        const double scale = frame.size.width > 0 ? (double)CGImageGetWidth(whole) / frame.size.width : 1.0;
+
+        const NSRect inWindow = [view convertRect:rect toView:nil];
+        const CGRect crop =
+            CGRectMake(inWindow.origin.x * scale, (frame.size.height - NSMaxY(inWindow)) * scale,
+                       inWindow.size.width * scale, inWindow.size.height * scale);
+
+        CGImageRef cropped = CGImageCreateWithImageInRect(whole, crop);
+        CGImageRef chosen = cropped != nullptr ? cropped : whole;
+
+        result.ok = writePNG(chosen, destination);
+        result.width = (int)CGImageGetWidth(chosen);
+        result.height = (int)CGImageGetHeight(chosen);
+        result.scale = scale;
+
+        if (!result.ok)
+            result.error = "could not write the image";
+
+        if (cropped != nullptr)
+            CGImageRelease(cropped);
+        CGImageRelease(whole);
+
         return result;
     }
 
-    const CGWindowID windowID = (CGWindowID)[[view window] windowNumber];
-    juce::ignoreUnused(windowID);
-
-    // CGWindowListCreateImage was the way to do this and was made unavailable
-    // in macOS 15; ScreenCaptureKit replaces it, asynchronously and with a
-    // heavier setup. Not yet wired up, and deliberately an honest failure
-    // rather than a silently wrong image.
-    result.error = "GPU-drawn editors need the ScreenCaptureKit path, which is not implemented yet "
-                   "(CGWindowListCreateImage was removed in macOS 15)";
-    result.used = CaptureMethod::windowServer;
+    result.error = "capturing a GPU-drawn editor needs macOS 14 or later";
     return result;
 }
+
+bool EditorProbe::useSystemEvents = true;
 
 void EditorProbe::mouse(juce::Component& component, MouseAction action, juce::Point<float> p,
                         float scrollDelta, juce::ModifierKeys mods)
@@ -217,6 +343,49 @@ void EditorProbe::mouse(juce::Component& component, MouseAction action, juce::Po
             [NSApp postEvent:asNS atStart:NO];
 
         CFRelease(scroll);
+        return;
+    }
+
+    // Two ways to deliver, because the polite one does not always arrive.
+    //
+    // Posting into the application's own queue keeps the user's cursor where
+    // it was and cannot leak input into another application, which is why it
+    // is preferred. But a plugin that reads the pointer position from the
+    // window server rather than from the event -- or that only trusts events
+    // the system itself generated -- sees nothing, and the host has no way to
+    // tell that from the outside.
+    //
+    // A real system event is indistinguishable from a mouse, at the cost of
+    // moving the actual cursor and requiring the window to be in front.
+    if (useSystemEvents)
+    {
+        CGEventType cgType = kCGEventMouseMoved;
+        switch (action)
+        {
+        case MouseAction::down:
+            cgType = kCGEventLeftMouseDown;
+            break;
+        case MouseAction::drag:
+            cgType = kCGEventLeftMouseDragged;
+            break;
+        case MouseAction::up:
+            cgType = kCGEventLeftMouseUp;
+            break;
+        default:
+            break;
+        }
+
+        // CGEvent measures from the top left, the same way JUCE does.
+        const auto onScreen = component.localPointToGlobal(p);
+        CGEventRef ev = CGEventCreateMouseEvent(
+            nullptr, cgType, CGPointMake((CGFloat)onScreen.x, (CGFloat)onScreen.y), kCGMouseButtonLeft);
+        if (ev != nullptr)
+        {
+            CGEventSetFlags(ev, (CGEventFlags)flags);
+            CGEventPost(kCGHIDEventTap, ev);
+            CFRelease(ev);
+        }
+
         return;
     }
 

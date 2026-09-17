@@ -111,3 +111,62 @@ These are constraints on the software, not disclaimers.
 ## Status
 
 Design stage. The format above is a sketch and will change once phase 1 reports whether UI operations can be recorded and replayed at all — a patch format with an escape hatch that does not work is a patch format that only covers automatable parameters, which is a smaller and much less interesting thing.
+
+---
+
+## Replay: what a patch is anchored to
+
+A patch is only worth distributing if replaying it lands in the same place it
+was recorded from. Three things decide that.
+
+### The base state is the plugin's own default
+
+Replay starts from a freshly instantiated plugin and nothing else. That state
+is determinate, it is the same on every machine, and — the reason it matters
+here — it is **not** anybody's data: it is whatever the plugin constructs
+itself as. A patch that started from a factory preset would have to name that
+preset, and a patch that started from a saved state would have to carry it,
+which is the binary blob this format exists to avoid.
+
+So every patch is a path from the default, and the first operations in a
+recording are usually the ones that undo the defaults the author did not want.
+That is slightly wasteful and entirely portable.
+
+### Coordinates are the editor's own
+
+Pointer operations address the editor in its own coordinate space, the one the
+plugin laid its controls out in — not the screen, not the window. The host
+already knows where the editor is and at what scale it is drawn, so it does
+the conversion, and a patch does not care where the window was when it was
+recorded, what display it was on, or whether the host scaled the editor down
+to fit.
+
+Fractions of the editor are accepted as well, which is the more useful form
+when the operation was derived from an image: an agent reasoning about a
+screenshot knows a knob's position as a proportion of the picture, and that
+proportion stays correct if the plugin is opened at a different size.
+
+### The binding is to a plugin version, and it is checked
+
+A control's position is a fact about one version of one plugin's editor. The
+patch therefore records the plugin identifier and version it was made against,
+and replay refuses, loudly, when they do not match — rather than clicking
+where a knob used to be.
+
+Parameter operations are the exception and should be preferred wherever a
+control is a published parameter: a parameter is addressed by name and
+identifier, survives a layout change, and can be verified after the fact by
+reading the value back. Pointer operations are the escape hatch for everything
+the plugin did not publish, and they are inherently more fragile. A recorder
+should reach for a parameter first and a coordinate only when it must.
+
+### Verification is what makes replay trustworthy
+
+After each operation the host can compare the parameter set against what the
+recording expected. Most editor actions, even on controls that are not
+themselves parameters, move something that is — so a click that missed is
+usually detectable without looking at a single pixel. Where nothing observable
+changed, the recorded editor image is the fallback comparison.
+
+This is the difference between a patch format and a macro recorder: a macro
+replays blindly, and this can tell you it went wrong.

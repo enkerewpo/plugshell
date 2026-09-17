@@ -56,10 +56,24 @@ public:
     static CaptureResult capture(juce::Component& component, const juce::File& destination,
                                  CaptureMethod method = CaptureMethod::automatic);
 
-    /** Whether the window server will hand over pixels, which on current macOS
-        means whether the user has granted Screen Recording. Asking does not
-        raise the permission prompt; capturing does. */
-    static bool canUseWindowServer();
+    /** Whether Screen Recording has already been granted. Does not prompt. */
+    static bool hasScreenRecordingPermission();
+
+    /** Raises the system permission prompt if it has not been answered before.
+        Only the first call shows anything; after that macOS remembers, and a
+        change of mind has to be made in System Settings. */
+    static bool requestScreenRecordingPermission();
+
+    /** Whether synthetic input will be delivered.
+
+        macOS treats generating input as separate from observing the screen and
+        gates it behind Accessibility. Without it, event injection fails the
+        way it always does here: silently, with the call reporting success and
+        nothing on screen moving. */
+    static bool hasAccessibilityPermission();
+
+    /** Prompts for Accessibility, once. */
+    static bool requestAccessibilityPermission();
 
     enum class MouseAction
     {
@@ -69,6 +83,12 @@ public:
         up,
         scroll
     };
+
+    /** Whether to inject events at the system level rather than into this
+        application's own event queue. See the note in the implementation:
+        the application queue is the better-behaved of the two and is not
+        always enough. */
+    static bool useSystemEvents;
 
     /** Posts a synthetic mouse event at a point given in `component`'s own
         coordinates.

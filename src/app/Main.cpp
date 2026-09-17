@@ -10,6 +10,7 @@
 
 #include "AnalyserTap.h"
 #include "ChordName.h"
+#include "ControlServer.h"
 #include "EditorProbe.h"
 #include "KeyMonitor.h"
 #include "Overlay.h"
@@ -61,6 +62,8 @@ class PluginList : public juce::Component
 public:
     static constexpr int rowH = 30;
     std::function<void(const IndexedPlugin&)> onChoose;
+
+    const juce::Array<IndexedPlugin>& getItems() const { return plugins; }
 
     void setItems(juce::Array<IndexedPlugin> items)
     {
@@ -447,6 +450,216 @@ public:
         showOverlay(std::move(o));
     }
 
+    /** Answers one request from the control socket. Runs on the message
+        thread, so it may touch the plugin and the editor freely. */
+    juce::var handleControl(const juce::var& request)
+    {
+        const auto op = request.getProperty("op", "").toString();
+
+        if (op == "state")
+            return okWith(
+                [this](juce::DynamicObject& o)
+                {
+                    o.setProperty("loaded", instance != nullptr);
+                    o.setProperty("name", loadedName);
+                    o.setProperty("hasEditor", editor != nullptr);
+                    o.setProperty("keysEnabled", keysEnabled);
+                    o.setProperty("octave", octave);
+                    if (instance != nullptr)
+                    {
+                        o.setProperty("parameterCount", instance->getParameters().size());
+                        o.setProperty("programCount", instance->getNumPrograms());
+                        o.setProperty("currentProgram", instance->getCurrentProgram());
+                    }
+                    if (editor != nullptr)
+                    {
+                        o.setProperty("editorWidth", editor->getWidth());
+                        o.setProperty("editorHeight", editor->getHeight());
+                        o.setProperty("editorScale", editorScale);
+
+                        // Where the editor actually is, so a caller can check its
+                        // own arithmetic instead of estimating from a screenshot.
+                        const auto b = editor->getScreenBounds();
+                        o.setProperty("editorScreenX", b.getX());
+                        o.setProperty("editorScreenY", b.getY());
+                        o.setProperty("editorScreenW", b.getWidth());
+                        o.setProperty("editorScreenH", b.getHeight());
+                    }
+                });
+
+        if (op == "permissions")
+        {
+            if ((bool) request.getProperty("request", false))
+                EditorProbe::requestScreenRecordingPermission();
+
+            if ((bool) request.getProperty("request", false))
+                EditorProbe::requestAccessibilityPermission();
+
+            return okWith(
+                [](juce::DynamicObject& o)
+                {
+                    o.setProperty("accessibility", EditorProbe::hasAccessibilityPermission());
+                    o.setProperty("screenRecording", EditorProbe::hasScreenRecordingPermission());
+                    o.setProperty("note", "macOS shows its prompt only once; after a refusal, grant it in "
+                                          "System Settings > Privacy & Security > Screen Recording, then "
+                                          "restart plugshell");
+                });
+        }
+
+        if (op == "plugins")
+        {
+            juce::Array<juce::var> items;
+            for (const auto& p : list.getItems())
+            {
+                auto* o = new juce::DynamicObject();
+                o->setProperty("name", p.name);
+                o->setProperty("vendor", p.vendor);
+                o->setProperty("version", p.version);
+                o->setProperty("category", p.category);
+                o->setProperty("path", p.bundle.getFullPathName());
+                items.add(juce::var(o));
+            }
+            return okWith([&items](juce::DynamicObject& o) { o.setProperty("plugins", items); });
+        }
+
+        if (op == "load")
+        {
+            const auto path = request.getProperty("path", "").toString();
+            if (path.isEmpty())
+                return error("load needs a path");
+            loadFromPath(path);
+            return okWith([](juce::DynamicObject&) {});
+        }
+
+        if (op == "unload")
+        {
+            unload();
+            return okWith([](juce::DynamicObject&) {});
+        }
+
+        if (instance == nullptr)
+            return error("no plugin is loaded");
+
+        if (op == "params")
+        {
+            // Paged and searchable, not a dump. Pigments publishes 4446
+            // parameters; asking for all of them at once is slow to build,
+            // slow to send, and not what a caller wanted anyway -- the real
+            // question is almost always "which parameter is the filter
+            // cutoff", which is a search.
+            const auto& ps = instance->getParameters();
+            const auto search = request.getProperty("search", "").toString();
+            const int offset = juce::jmax(0, (int) request.getProperty("offset", 0));
+            const int limit = juce::jlimit(1, 2000, (int) request.getProperty("limit", 200));
+
+            juce::Array<int> matching;
+            for (int i = 0; i < ps.size(); ++i)
+                if (search.isEmpty() || ps[i]->getName(96).containsIgnoreCase(search))
+                    matching.add(i);
+
+            juce::Array<juce::var> items;
+            for (int n = offset; n < juce::jmin(matching.size(), offset + limit); ++n)
+            {
+                const int i = matching[n];
+                auto* o = new juce::DynamicObject();
+                o->setProperty("index", i);
+                o->setProperty("name", ps[i]->getName(96));
+                o->setProperty("label", ps[i]->getLabel());
+                o->setProperty("value", ps[i]->getValue());
+                o->setProperty("text", ps[i]->getCurrentValueAsText());
+                o->setProperty("steps", ps[i]->getNumSteps());
+                o->setProperty("automatable", ps[i]->isAutomatable());
+                items.add(juce::var(o));
+            }
+
+            return okWith(
+                [&](juce::DynamicObject& o)
+                {
+                    o.setProperty("total", ps.size());
+                    o.setProperty("matched", matching.size());
+                    o.setProperty("offset", offset);
+                    o.setProperty("params", items);
+                });
+        }
+
+        if (op == "set")
+        {
+            auto* p = findParameter(request);
+            if (p == nullptr)
+                return error("no such parameter");
+
+            const auto value = (float) (double) request.getProperty("value", -1.0);
+            if (value < 0.0f || value > 1.0f)
+                return error("value must be between 0 and 1");
+
+            // Through the host-facing gesture calls, not setValue alone: a
+            // plugin that only repaints its editor on a gesture would take the
+            // change and go on drawing the old position.
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(value);
+            p->endChangeGesture();
+
+            return okWith(
+                [p](juce::DynamicObject& o)
+                {
+                    o.setProperty("value", p->getValue());
+                    o.setProperty("text", p->getCurrentValueAsText());
+                });
+        }
+
+        if (op == "programs")
+        {
+            juce::Array<juce::var> items;
+            for (int i = 0; i < instance->getNumPrograms(); ++i)
+                items.add(instance->getProgramName(i));
+            return okWith([&items](juce::DynamicObject& o) { o.setProperty("programs", items); });
+        }
+
+        if (op == "program")
+        {
+            const int index = (int) request.getProperty("index", -1);
+            if (index < 0 || index >= instance->getNumPrograms())
+                return error("program index out of range");
+            instance->setCurrentProgram(index);
+            return okWith(
+                [this](juce::DynamicObject& o)
+                {
+                    o.setProperty("currentProgram", instance->getCurrentProgram());
+                    o.setProperty("name", instance->getProgramName(instance->getCurrentProgram()));
+                });
+        }
+
+        if (editor == nullptr)
+            return error("the plugin has no editor open");
+
+        if (op == "capture")
+        {
+            const auto path = request.getProperty("path", "").toString();
+            if (path.isEmpty())
+                return error("capture needs a path");
+
+            const auto r = EditorProbe::capture(*editor, juce::File(path));
+            if (!r.ok)
+                return error(r.error);
+
+            return okWith(
+                [&r, &path](juce::DynamicObject& o)
+                {
+                    o.setProperty("path", path);
+                    o.setProperty("width", r.width);
+                    o.setProperty("height", r.height);
+                    o.setProperty("scale", r.scale);
+                    o.setProperty("method", r.used == EditorProbe::CaptureMethod::viewCache ? "viewCache"
+                                                                                            : "windowServer");
+                });
+        }
+
+        if (op == "click" || op == "drag" || op == "scroll" || op == "move")
+            return handlePointer(op, request);
+
+        return error("unknown op: " + op);
+    }
+
     /** Writes a PNG of the plugin's editor exactly as it appears on screen.
 
         The point of this is that a parameter list is not the plugin. Which
@@ -468,6 +681,100 @@ public:
                (r.used == EditorProbe::CaptureMethod::viewCache ? "view cache" : "window server") + " -> " +
                destination.getFullPathName();
     }
+
+    /** Pointer operations address the editor in its own coordinates, so a
+        caller works in the same space the capture gave it and does not have to
+        know where the window is or what scale it is drawn at. Fractions are
+        accepted too, since an agent reasoning about an image it was handed
+        usually knows a position as a proportion of the picture. */
+    juce::var handlePointer(const juce::String& op, const juce::var& request)
+    {
+        const auto point = [this, &request](const char* key) -> juce::Point<float>
+        {
+            const auto v = request.getProperty(key, juce::var());
+            if (!v.isArray() || v.size() < 2)
+                return {-1.0f, -1.0f};
+
+            auto x = (float) (double) v[0], y = (float) (double) v[1];
+
+            if ((bool) request.getProperty("normalised", request.getProperty("normalized", false)))
+            {
+                x *= (float) editor->getWidth();
+                y *= (float) editor->getHeight();
+            }
+
+            return {x, y};
+        };
+
+        const auto at = point("at");
+        if (at.x < 0.0f)
+            return error(op + " needs \"at\": [x, y]");
+
+        if (op == "scroll")
+        {
+            EditorProbe::mouse(*editor, EditorProbe::MouseAction::scroll, at,
+                               (float) (double) request.getProperty("delta", 1.0));
+            return okWith([](juce::DynamicObject&) {});
+        }
+
+        if (op == "move")
+        {
+            EditorProbe::mouse(*editor, EditorProbe::MouseAction::move, at);
+            return okWith([&at](juce::DynamicObject& o)
+                          { o.setProperty("at", juce::Array<juce::var>{at.x, at.y}); });
+        }
+
+        if (op == "click")
+        {
+            EditorProbe::mouse(*editor, EditorProbe::MouseAction::move, at);
+            EditorProbe::mouse(*editor, EditorProbe::MouseAction::down, at);
+            EditorProbe::mouse(*editor, EditorProbe::MouseAction::up, at);
+            return okWith([](juce::DynamicObject&) {});
+        }
+
+        const auto to = point("to");
+        if (to.x < 0.0f)
+            return error("drag needs \"to\": [x, y]");
+
+        EditorProbe::drag(*editor, at, to, (int) request.getProperty("steps", 24));
+        return okWith([](juce::DynamicObject&) {});
+    }
+
+    juce::AudioProcessorParameter* findParameter(const juce::var& request) const
+    {
+        const auto& ps = instance->getParameters();
+        const int index = (int) request.getProperty("index", -1);
+
+        if (index >= 0)
+            return index < ps.size() ? ps[index] : nullptr;
+
+        const auto name = request.getProperty("name", "").toString();
+        for (auto* p : ps)
+            if (p->getName(64).equalsIgnoreCase(name))
+                return p;
+
+        return nullptr;
+    }
+
+    template <typename Fn>
+    static juce::var okWith(Fn&& fill)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty("ok", true);
+        fill(*o);
+        return juce::var(o);
+    }
+
+    static juce::var error(const juce::String& why)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty("ok", false);
+        o->setProperty("error", why);
+        return juce::var(o);
+    }
+
+    /** @return the port, or 0 if the port could not be bound. */
+    int startControlServer(int port) { return control.start(port) ? control.getPort() : 0; }
 
     /** Opens the analyser panel, for command-line and agent use. */
     void openScope()
@@ -694,6 +1001,145 @@ private:
         showOverlay(std::move(o));
     }
 
+    /** The device selector with a permission row beneath it.
+
+        Screen Recording belongs in settings because without it the host cannot
+        see a plugin that draws with the GPU, and that failure otherwise
+        surfaces as a capture error in a log somewhere rather than as something
+        the user can act on. macOS only ever shows its prompt once, so after a
+        refusal the only route is System Settings, and the row has to offer
+        that rather than pretending the prompt will come back. */
+    class SettingsBody : public juce::Component
+    {
+    public:
+        SettingsBody(std::unique_ptr<juce::Component> main) : content(std::move(main))
+        {
+            addAndMakeVisible(content.get());
+
+            rows.add(new Row(
+                "Screen recording", "Needed to capture editors that draw with the GPU.",
+                &EditorProbe::hasScreenRecordingPermission, &EditorProbe::requestScreenRecordingPermission,
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"));
+
+            rows.add(new Row(
+                "Accessibility", "Needed to click and drag inside a plugin's editor.",
+                &EditorProbe::hasAccessibilityPermission, &EditorProbe::requestAccessibilityPermission,
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"));
+
+            for (auto* r : rows)
+                addAndMakeVisible(r);
+        }
+
+        static int heightOfRows() { return rowHeight * 2; }
+
+        void resized() override
+        {
+            auto r = getLocalBounds();
+
+            for (int i = rows.size(); --i >= 0;)
+                rows[i]->setBounds(r.removeFromBottom(rowHeight));
+
+            content->setBounds(r.withTrimmedBottom(8));
+        }
+
+    private:
+        static constexpr int rowHeight = 52;
+
+        /** One permission: what it is for, whether it is granted, and the one
+            button that can change that.
+
+            macOS shows its prompt only once. After a refusal the prompt never
+            returns, so the button has to fall through to the settings pane
+            rather than appearing to do nothing -- which is exactly how this
+            failed before it was built: the capture and the click both reported
+            success and neither did anything. */
+        class Row : public juce::Component
+        {
+        public:
+            using Query = bool (*)();
+
+            Row(juce::String t, juce::String w, Query has, Query request, juce::String pane)
+                : title(std::move(t)), why(std::move(w)), isGranted(has), ask(request),
+                  settingsPane(std::move(pane))
+            {
+                addAndMakeVisible(action);
+                action.setColours(theme::ink, theme::mute, theme::hair);
+                action.setFramed(true);
+                action.onClick = [this]
+                {
+                    if (!isGranted() && !ask())
+                        juce::URL(settingsPane).launchInDefaultBrowser();
+
+                    refresh();
+                };
+
+                refresh();
+                startTimer();
+            }
+
+            void refresh()
+            {
+                granted = isGranted();
+                action.setText(granted ? "Granted" : "Allow...");
+                action.setEnabled(!granted);
+                repaint();
+            }
+
+            void paint(juce::Graphics& g) override
+            {
+                auto r = getLocalBounds();
+
+                g.setColour(theme::hair);
+                g.drawLine((float) r.getX(), (float) r.getY(), (float) r.getRight(), (float) r.getY(), 1.0f);
+
+                r = r.reduced(0, 8);
+
+                g.setColour(granted ? theme::ink : theme::mute);
+                g.setFont(theme::ui(theme::size::body));
+                g.drawText(title, r.removeFromTop(17), juce::Justification::centredLeft);
+
+                g.setColour(theme::mute);
+                g.setFont(theme::ui(theme::size::micro));
+                g.drawText(granted ? "Granted." : why, r, juce::Justification::centredLeft, true);
+            }
+
+            void resized() override { action.setBounds(getLocalBounds().removeFromRight(96).reduced(4, 10)); }
+
+        private:
+            /** Granting happens in System Settings, in another window, and
+                macOS tells nobody. Polling is how the row notices. */
+            struct Poll : juce::Timer
+            {
+                std::function<void()> tick;
+                void timerCallback() override
+                {
+                    if (tick)
+                        tick();
+                }
+            };
+
+            void startTimer()
+            {
+                poll.tick = [this]
+                {
+                    if (!granted)
+                        refresh();
+                };
+                poll.startTimerHz(2);
+            }
+
+            juce::String title, why;
+            Query isGranted, ask;
+            juce::String settingsPane;
+            StripButton action{"Allow..."};
+            Poll poll;
+            bool granted = false;
+        };
+
+        std::unique_ptr<juce::Component> content;
+        juce::OwnedArray<Row> rows;
+    };
+
     void showSettings()
     {
         if (overlay != nullptr)
@@ -714,7 +1160,7 @@ private:
                                                                         /*hideAdvanced*/ false);
 
         sel->setLookAndFeel(&darkLookAndFeel);
-        o->setContent(std::move(sel), 420);
+        o->setContent(std::make_unique<SettingsBody>(std::move(sel)), 420 + SettingsBody::heightOfRows());
 
         if (outputIsBluetooth())
             o->setFooter("Bluetooth output. Most of the " +
@@ -1220,6 +1666,7 @@ private:
         }
     };
 
+    ControlServer control{[this](const juce::var& r) { return handleControl(r); }};
     Watchdog stuckKeyWatchdog;
     juce::HashMap<int, int> heldCodes; // character -> hardware key
     std::unique_ptr<ScopePanel> scopePanel;
@@ -1280,6 +1727,19 @@ public:
 
         if (tokens.contains("--scope"))
             main->openScope();
+
+        const auto serve = tokens.indexOf("--serve");
+        if (serve >= 0)
+        {
+            const int wanted = serve + 1 < tokens.size() && tokens[serve + 1].containsOnly("0123456789")
+                                   ? tokens[serve + 1].getIntValue()
+                                   : ControlServer::defaultPort;
+
+            const int port = main->startControlServer(wanted);
+            std::cout << (port != 0 ? "control: listening on 127.0.0.1:" + juce::String(port)
+                                    : "control: could not bind port " + juce::String(wanted))
+                      << std::endl;
+        }
 
         // Capture has to wait for the editor to exist and to have drawn at
         // least once; a plugin that opens its window and then loads its skin
