@@ -695,6 +695,15 @@ public:
                     o.setProperty("themeIsDark", theme::isDark());
                     o.setProperty("themeBase", theme::base.toDisplayString(false));
                     o.setProperty("settingsFile", settingsFile().getFullPathName());
+
+                    const auto work = juce::Desktop::getInstance()
+                                          .getDisplays()
+                                          .getPrimaryDisplay()
+                                          ->userBounds.toNearestInt();
+                    o.setProperty("workArea", work.toString());
+
+                    if (auto* top = getTopLevelComponent())
+                        o.setProperty("windowBounds", top->getScreenBounds().toString());
                     o.setProperty("octave", octave);
                     if (instance != nullptr)
                     {
@@ -1098,26 +1107,28 @@ public:
     {
         g.fillAll(theme::base);
 
+        // One baseline for the whole row, and the byline placed after the
+        // wordmark by measuring it rather than by a number that was right at
+        // one type size and wrong at the next.
         g.setColour(theme::ink);
         g.setFont(theme::ui(theme::size::title));
-        g.drawText("plugshell", 16, 12, 120, 22, juce::Justification::centredLeft);
+        g.drawText("plugshell", headerInset, 12, 160, 22, juce::Justification::centredLeft);
 
-        if (loadedName.isEmpty())
-        {
-            g.setColour(theme::mute);
-            g.setFont(theme::ui(theme::size::label));
-            g.drawText("by wheatfox", 104, 13, 160, 20, juce::Justification::centredLeft);
-        }
+        const int afterName = headerInset +
+                              juce::roundToInt(juce::GlyphArrangement::getStringWidth(
+                                  theme::ui(theme::size::title), "plugshell")) +
+                              14;
 
-        if (loadedName.isNotEmpty())
-        {
-            g.setColour(theme::mute);
-            g.setFont(theme::ui(theme::size::body));
-            g.drawText(loadedName, 110, 12, getWidth() - 140, 22, juce::Justification::centredLeft);
-        }
+        // Stops short of the appearance control instead of running underneath it.
+        const int rightEdge = getWidth() - headerInset - themeButtonWidth - 12;
+
+        g.setColour(theme::mute);
+        g.setFont(theme::ui(loadedName.isEmpty() ? theme::size::label : theme::size::body));
+        g.drawText(loadedName.isEmpty() ? "by wheatfox" : loadedName, afterName, 12,
+                   juce::jmax(0, rightEdge - afterName), 22, juce::Justification::centredLeft, true);
 
         g.setColour(theme::hair);
-        g.drawLine(16.0f, 42.0f, (float) getWidth() - 16.0f, 42.0f, 1.0f);
+        g.drawLine((float) headerInset, 42.0f, (float) (getWidth() - headerInset), 42.0f, 1.0f);
 
         if (viewport.isVisible())
         {
@@ -1372,7 +1383,9 @@ public:
         positionOverlay();
 
         auto r = getLocalBounds();
-        themeButton.setBounds(r.getWidth() - 84, 9, 70, 32);
+        // Right edge on the same margin as the rule beneath it, centred on
+        // the same line as the wordmark beside it.
+        themeButton.setBounds(r.getWidth() - headerInset - themeButtonWidth, 23 - 15, themeButtonWidth, 30);
         strip.setBounds(r.removeFromBottom(stripHeight()));
 
         if (scopePanel != nullptr)
@@ -1381,7 +1394,7 @@ public:
             scopePanel->setBounds(r.removeFromBottom(h));
             scopePanel->setVisible(h > 0);
         }
-        keepOnScreen();
+        keepOnScreenSoon();
 
         const auto la = listArea();
         viewport.setBounds(la);
@@ -1452,8 +1465,24 @@ private:
         if (overlay == nullptr)
             return;
 
-        // Screen coordinates, because the overlay is no longer a child.
-        overlay->setBounds(getScreenBounds());
+        // The panel is its own window, so it does not have to be the size of
+        // this one -- and it must not be. The host's window is the size of
+        // whatever plugin is loaded, and a meter's editor can be 170 points
+        // wide, which turned the settings panel into a column of truncated
+        // labels with the title written across the close hint.
+        //
+        // So: covering the host window when that is big enough to read, and a
+        // readable size centred on it when it is not, clamped to the display.
+        const auto host = getScreenBounds();
+        const auto work =
+            juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt();
+
+        const int w = juce::jlimit(juce::jmin(overlayMinWidth, work.getWidth()), work.getWidth(),
+                                   juce::jmax(host.getWidth(), overlayMinWidth));
+        const int h = juce::jlimit(juce::jmin(overlayMinHeight, work.getHeight()), work.getHeight(),
+                                   juce::jmax(host.getHeight(), overlayMinHeight));
+
+        overlay->setBounds(juce::Rectangle<int>(w, h).withCentre(host.getCentre()).constrainedWithin(work));
     }
 
     void dismissOverlay()
@@ -2123,6 +2152,24 @@ private:
         after the analyser opens on a short screen. A window whose bottom is
         off-screen has no reachable control strip, which is how the analyser
         became impossible to close. */
+    /** Scheduled rather than run inline.
+
+        This is called from resized(), and at that moment this component has
+        its new size but the window around it has not caught up -- the window
+        tracks the content, and that happens after. Measuring there measures
+        the old window, finds nothing to correct, and the window then grows off
+        the bottom of the screen with nobody left to notice. */
+    void keepOnScreenSoon()
+    {
+        juce::Component::SafePointer<MainComponent> self(this);
+        juce::MessageManager::callAsync(
+            [self]
+            {
+                if (self != nullptr)
+                    self->keepOnScreen();
+            });
+    }
+
     void keepOnScreen()
     {
         auto* top = getTopLevelComponent();
@@ -2345,6 +2392,10 @@ private:
     std::unique_ptr<juce::AudioPluginInstance> instance;
     std::unique_ptr<juce::AudioProcessorEditor> editor;
     static constexpr int headerHeight = 50;
+    static constexpr int headerInset = 16;
+    static constexpr int overlayMinWidth = 700;
+    static constexpr int overlayMinHeight = 560;
+    static constexpr int themeButtonWidth = 40;
     static constexpr int stripGap = 4;
 
     int stripHeight() const { return ControlStrip::heightFor(getWidth()); }

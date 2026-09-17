@@ -114,6 +114,15 @@ public:
         g.setColour(colHair);
         g.drawRect(panel, 1);
 
+        if (tooNarrow())
+        {
+            g.setColour(colMute);
+            g.setFont(juce::Font(juce::FontOptions(13.0f)));
+            g.drawFittedText(title + " needs a wider window.\nWiden it, or press esc and open this again.",
+                             panel.reduced(18), juce::Justification::centred, 4);
+            return;
+        }
+
         g.setColour(colInk);
         g.setFont(juce::Font(juce::FontOptions(17.0f)));
         g.drawText(title, panel.getX() + 24, panel.getY() + 18, 300, 24, juce::Justification::centredLeft);
@@ -157,6 +166,9 @@ public:
     void resized() override
     {
         if (content != nullptr)
+            content->setVisible(! tooNarrow());
+
+        if (content != nullptr && ! tooNarrow())
         {
             const auto panel = panelBounds();
             const int reserve = footer.isEmpty() ? 92 : 148;
@@ -167,7 +179,7 @@ public:
 
     void paintOverChildren(juce::Graphics& g) override
     {
-        if (footer.isEmpty())
+        if (footer.isEmpty() || tooNarrow())
             return;
 
         const auto panel = panelBounds();
@@ -198,6 +210,19 @@ private:
     // Fade only. The panel sits where it sits; sliding it in from below said
     // it had come from the bottom of the window, which is not where it came
     // from and not something worth animating.
+    /** Below this the panel cannot lay itself out.
+
+        The title is drawn in a 300-wide box from `panel.getX() + 24`, and
+        "esc to close" in a 116-wide box ending at `panel.getRight() - 24`;
+        narrower than this the two overlap and the label/value rows lose their
+        value column entirely. Rendering it anyway produced a panel with the
+        heading printed on top of the close hint and every label truncated to
+        three characters.
+    */
+    static constexpr int minPanelWidth = 420;
+
+    bool tooNarrow() const { return getWidth() - 80 < minPanelWidth; }
+
     juce::Rectangle<int> panelBounds() const
     {
         const int w = juce::jmin(maxPanelWidth, getWidth() - 80);

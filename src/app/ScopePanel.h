@@ -237,7 +237,11 @@ private:
 
     void refresh()
     {
-        tap.readLatest(scope.data(), scopeFrames);
+        // The whole lookback, not just the visible span: `drawScope` reads
+        // from `scopeLookback - scopeFrames` onwards, and `findTrigger` and
+        // `estimatePeriod` search further back still. Filling only the first
+        // `scopeFrames` left everything the display actually reads at zero.
+        tap.readLatest(scope.data(), scopeLookback);
         tap.readLatestStereo(stereoL.data(), stereoR.data(), scopeFrames);
 
         runTransform(fftLow, windowLow, lowData, lowMag, fftSizeLow);
