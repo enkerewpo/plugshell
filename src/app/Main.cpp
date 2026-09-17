@@ -671,7 +671,7 @@ public:
         big->setOpen(true);
 
         o->setContent(std::move(big), juce::jmax(280, getHeight() - 220));
-        o->setFooter("Keys keep playing while this is open. esc to close.");
+        o->setFooter("Keys keep playing while this is open.");
         showOverlay(std::move(o));
     }
 
@@ -693,6 +693,8 @@ public:
                                            : theme::mode == theme::Mode::light ? "light"
                                                                                : "auto");
                     o.setProperty("themeIsDark", theme::isDark());
+                    o.setProperty("overlayOpen", overlay != nullptr);
+                    o.setProperty("lastKeyChar", lastKeyChar);
                     o.setProperty("themeBase", theme::base.toDisplayString(false));
                     o.setProperty("settingsFile", settingsFile().getFullPathName());
 
@@ -1451,13 +1453,13 @@ private:
         // over every other window the user had open.
         EditorProbe::attachAsChildWindow(*overlay, *this);
 
+        // Faded in first, focused second. A window sitting at zero alpha is
+        // not a window the system will hand the keyboard to, so grabbing focus
+        // before starting the fade grabbed nothing -- which is why esc stopped
+        // closing anything.
+        overlay->beginFadeIn();
         overlay->toFront(true);
         overlay->grabKeyboardFocus();
-
-        // After the window exists, is positioned and has been drawn once.
-        // Fading something that is still being built animates the setup cost
-        // rather than the panel.
-        overlay->beginFadeIn();
     }
 
     void positionOverlay()
@@ -1838,7 +1840,15 @@ private:
         // A panel is a window of its own and keyboard focus does not reliably
         // sit on it, which is the same reason the note keys are read here
         // rather than through the component tree.
-        if (isDown && c == 27 && overlay != nullptr)
+        if (isDown)
+            lastKeyChar = c;
+
+        // By hardware key, not by character. An input method sits between the
+        // keyboard and the character, and a Chinese one consumes Escape to
+        // dismiss its candidate window -- measurably, since "x" reached this
+        // handler while Escape did not. The key code is the physical key and
+        // no input method rewrites it.
+        if (isDown && (c == 27 || keyCode == 53) && overlay != nullptr)
         {
             dismissOverlay();
             return true;
@@ -2414,6 +2424,7 @@ private:
     double editorScale = 1.0;
     bool fitting = false;
     bool editorTooBig = false;
+    int lastKeyChar = 0;
     bool overWordmark = false;
     theme::Palette themeFrom, themeTo;
     Eased themeMix{1.0f};

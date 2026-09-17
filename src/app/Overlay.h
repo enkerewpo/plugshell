@@ -132,9 +132,29 @@ public:
         g.drawText(title, juce::Rectangle<float>(panel.getX() + 24.0f, panel.getY() + 18.0f, 300.0f, 24.0f),
                    juce::Justification::centredLeft);
 
+        // A drawn control rather than a written instruction. "esc to close"
+        // is a promise about a key, and a key can be taken by an input method
+        // before it ever reaches this application -- which is exactly what was
+        // happening. A cross is a promise about something on screen.
+        closeHit = juce::Rectangle<int>(juce::roundToInt(panel.getRight()) - 46,
+                                        juce::roundToInt(panel.getY()) + 16, 30, 30);
+
+        if (closeHot)
+        {
+            g.setColour(colInk.withAlpha(0.12f));
+            g.fillRoundedRectangle(closeHit.toFloat(), 5.0f);
+        }
+
+        {
+            const auto box = closeHit.toFloat().reduced(9.0f);
+            g.setColour(closeHot ? colInk : colMute);
+            g.drawLine(box.getX(), box.getY(), box.getRight(), box.getBottom(), 1.4f);
+            g.drawLine(box.getRight(), box.getY(), box.getX(), box.getBottom(), 1.4f);
+        }
+
         g.setColour(colMute);
-        g.setFont(juce::Font(juce::FontOptions(13.5f)));
-        g.drawText("esc to close", panel.getRight() - 140.0f, panel.getY() + 20.0f, 116, 20,
+        g.setFont(juce::Font(juce::FontOptions(12.5f)));
+        g.drawText("esc", panel.getRight() - 86.0f, panel.getY() + 20.0f, 34, 20,
                    juce::Justification::centredRight);
 
         g.setColour(colHair);
@@ -197,8 +217,23 @@ public:
 
     void mouseUp(const juce::MouseEvent& e) override
     {
-        if (!panelBounds().contains(e.getPosition()) && onDismiss)
+        if (!onDismiss)
+            return;
+
+        if (closeHit.contains(e.getPosition()) || !panelBounds().contains(e.getPosition()))
             onDismiss();
+    }
+
+    void mouseMove(const juce::MouseEvent& e) override
+    {
+        const bool hot = closeHit.contains(e.getPosition());
+
+        if (hot != closeHot)
+        {
+            closeHot = hot;
+            setMouseCursor(hot ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+            repaint(closeHit.expanded(2));
+        }
     }
 
     bool keyPressed(const juce::KeyPress& k) override
@@ -239,6 +274,8 @@ private:
         return juce::Rectangle<int>(w, h).withCentre(getLocalBounds().getCentre());
     }
 
+    juce::Rectangle<int> closeHit;
+    bool closeHot = false;
     Eased appear{0.0f};
     bool leaving = false;
 

@@ -215,6 +215,11 @@ void EditorProbe::attachAsChildWindow(juce::Component& child, juce::Component& p
     // over every other application on the machine.
     [childWindow setLevel:NSNormalWindowLevel];
     [parentWindow addChildWindow:childWindow ordered:NSWindowAbove];
+
+    // A child window does not become the key window on its own, and a window
+    // that is not key is not sent key events -- which is why esc stopped
+    // closing panels the moment they were parented rather than floated.
+    [childWindow makeKeyAndOrderFront:nil];
 }
 
 bool EditorProbe::hasAccessibilityPermission() { return AXIsProcessTrusted(); }

@@ -380,9 +380,25 @@ private:
         // tenth of the height at unity, which is a flat line with a wobble --
         // useless for the one thing this display is for. The gain follows the
         // signal slowly so the trace does not breathe.
+        // The average of the window, removed before anything else.
+        //
+        // Any steady offset in the signal -- and oscillators routinely carry
+        // one -- moves the whole trace off the centre line, so the line drawn
+        // as zero is not where the trace's own zero is. A bench oscilloscope
+        // calls taking it out AC coupling and offers it as a switch; here it
+        // is simply always on, because the display exists to show the shape.
+        const int last = juce::jmin(scopeLookback, start + span);
+        const int count = juce::jmax(1, last - start);
+
+        double sum = 0.0;
+        for (int i = start; i < last; ++i)
+            sum += scope[(size_t) i];
+
+        const float offset = (float) (sum / count);
+
         float peak = 1.0e-4f;
-        for (int i = start; i < juce::jmin(scopeLookback, start + span); ++i)
-            peak = juce::jmax(peak, std::abs(scope[(size_t) i]));
+        for (int i = start; i < last; ++i)
+            peak = juce::jmax(peak, std::abs(scope[(size_t) i] - offset));
 
         const float wanted = juce::jlimit(1.0f, 64.0f, 0.92f / peak);
         waveGain = wanted < waveGain ? wanted : waveGain * 0.9f + wanted * 0.1f;
@@ -402,7 +418,7 @@ private:
             float lo = 1.0f, hi = -1.0f;
             for (int i = from; i < to && i < scopeLookback; ++i)
             {
-                const float v = scope[(size_t) i] * waveGain;
+                const float v = (scope[(size_t) i] - offset) * waveGain;
                 lo = juce::jmin(lo, v);
                 hi = juce::jmax(hi, v);
             }
