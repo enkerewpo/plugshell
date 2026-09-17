@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 wheatfox <wheatfox17@icloud.com>
+#
+# Builds a distributable disk image, signing and notarising it when the
+# credentials for that exist and saying plainly what the result is worth when
+# they do not.
+
+set -euo pipefail
+
+APP_NAME="plugshell"
+BUNDLE_ID="ai.plugshell.app"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD="${BUILD:-$ROOT/build}"
+CONFIG="${CONFIG:-RelWithDebInfo}"
+APP="$BUILD/src/app/${APP_NAME}_app_artefacts/$CONFIG/$APP_NAME.app"
+OUT_DIR="${OUT_DIR:-$ROOT/dist}"
+STAGE="$OUT_DIR/.stage"
+
+# Set to a "Developer ID Application: ..." identity to produce an image that
+# opens without a Gatekeeper warning. Anything else -- a development
+# certificate, an ad-hoc signature -- will not, however valid it is for
+# running the application locally.
+SIGN_ID="${PLUGSHELL_DEVELOPER_ID:-}"
+
+# A notarytool keychain profile, created once with:
+#   xcrun notarytool store-credentials plugshell-notary \
+#       --apple-id <id> --team-id <team> --password <app-specific-password>
+NOTARY_PROFILE="${PLUGSHELL_NOTARY_PROFILE:-}"
+
+say() { printf '\033[1m%s\033[0m\n' "$*"; }
+warn() { printf '\033[33m%s\033[0m\n' "$*"; }
+
+[ -d "$APP" ] || {
+    echo "No application at $APP -- build it first (make build)." >&2
+    exit 1
+}
+
+VERSION="$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo 0.1.0)"
+DMG="$OUT_DIR/$APP_NAME-$VERSION.dmg"
+
+rm -rf "$STAGE" "$DMG"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/"
+
+# ---------------------------------------------------------------- signing
+
+if [ -n "$SIGN_ID" ]; then
+    say "Signing with $SIGN_ID"
+
+    # The hardened runtime is required before anything can be notarised, and
+    # it blocks loading code signed by anyone else -- which for a plugin host
+    # is every plugin it exists to load. Library validation has to be
+    # disabled or the shipped application will refuse to open a single VST3.
+    codesign --force --deep --options runtime --timestamp \
+        --entitlements "$ROOT/tools/plugshell.entitlements" \
+        --sign "$SIGN_ID" "$STAGE/$APP_NAME.app"
+
+    codesign --verify --strict --verbose=2 "$STAGE/$APP_NAME.app"
+else
+    warn "No Developer ID identity set (PLUGSHELL_DEVELOPER_ID)."
+    warn "The image will build, and macOS will refuse to open it without the"
+    warn "right-click > Open detour. See docs/DISTRIBUTION.md."
+fi
+
+# ---------------------------------------------------------------- the image
+
+ln -s /Applications "$STAGE/Applications"
+
+say "Building $DMG"
+hdiutil create \
+    -volname "$APP_NAME" \
+    -srcfolder "$STAGE" \
+    -fs HFS+ \
+    -format UDZO \
+    -ov \
+    "$DMG" >/dev/null
+
+rm -rf "$STAGE"
+
+# ------------------------------------------------------- notarise and staple
+
+if [ -n "$SIGN_ID" ]; then
+    codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
+fi
+
+if [ -n "$NOTARY_PROFILE" ] && [ -n "$SIGN_ID" ]; then
+    say "Notarising (this takes a few minutes)"
+    xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
+
+    # Stapling writes the notarisation ticket into the image, so a machine
+    # that is offline the first time it opens it still gets a verdict.
+    say "Stapling"
+    xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
+elif [ -n "$SIGN_ID" ]; then
+    warn "Signed but not notarised (PLUGSHELL_NOTARY_PROFILE is unset)."
+    warn "Gatekeeper will still block it on a machine that has not seen it."
+fi
+
+say "Done: $DMG"
+ls -lh "$DMG" | awk '{print "  " $5, $9}'

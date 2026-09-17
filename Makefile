@@ -49,3 +49,33 @@ check: format-check license-check ## Run all static checks
 .PHONY: clean
 clean: ## Remove the build tree
 	rm -rf $(BUILD_DIR)
+
+.PHONY: dmg
+dmg: build ## Build a distributable disk image (see docs/DISTRIBUTION.md)
+	@tools/make-dmg.sh
+
+.PHONY: signing-status
+signing-status: ## Report what this machine can and cannot sign
+	@echo "Usable codesigning identities:"
+	@security find-identity -v -p codesigning | sed 's/^/  /' || true
+	@echo
+	@if security find-identity -v -p codesigning | grep -q "Developer ID Application"; then \
+		echo "  Developer ID: present -- distributable images can be signed."; \
+	else \
+		echo "  Developer ID: MISSING."; \
+		echo "  Needed to ship a disk image others can open without a warning."; \
+		echo "  Requires a paid Apple Developer Program membership; create it at"; \
+		echo "  developer.apple.com > Certificates > Developer ID Application."; \
+	fi
+	@echo
+	@if xcrun notarytool history --keychain-profile "$${PLUGSHELL_NOTARY_PROFILE:-plugshell-notary}" >/dev/null 2>&1; then \
+		echo "  Notary credentials: present."; \
+	else \
+		echo "  Notary credentials: missing. Create them once with"; \
+		echo "    xcrun notarytool store-credentials plugshell-notary \\"; \
+		echo "        --apple-id <id> --team-id <team> --password <app-specific-password>"; \
+	fi
+
+.PHONY: uninstall
+uninstall: ## Remove plugshell and everything it wrote
+	@tools/uninstall.sh

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- Copyright (C) 2026 wheatfox <wheatfox17@icloud.com> -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- A plugin host exists to load code signed by other people. The
+         hardened runtime, which notarisation requires, refuses that by
+         default, so a notarised build without this entitlement opens
+         perfectly and then cannot load a single plugin. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- Some plugins generate code at runtime for their DSP or their UI. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- Plugins read their own factory content, and the user's preset
+         folders, from arbitrary places under /Library and the home
+         directory. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+</dict>
+</plist>
