@@ -6,3 +6,5 @@ compile_commands.json
 *.dSYM/
 spike/artifacts/
 dist/
+assets/dmg-background*.png
+assets/dmg-background.tiff

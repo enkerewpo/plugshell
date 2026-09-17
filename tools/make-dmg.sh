@@ -78,8 +78,9 @@ ln -s /Applications "$STAGE/Applications"
 # The first launch is blocked and the reason is not the user's fault, so the
 # explanation travels with the image rather than living in a README they would
 # have to already have found.
-if [ -z "$SIGN_ID" ]; then
-    cat >"$STAGE/INSTALL.txt" <<'NOTE'
+# Always written: the window points at it, and the detour it describes is
+# the same whether or not the image happens to be signed.
+cat >"$STAGE/INSTALL.txt" <<'NOTE'
 plugshell
 
 1. Drag plugshell.app onto the Applications folder here.
@@ -106,16 +107,84 @@ plugshell
 Source, and the reasoning behind all of the above:
 https://github.com/enkerewpo/plugshell
 NOTE
-fi
+
+# --------------------------------------------------------- the backdrop
+
+say "Drawing the backdrop"
+python3 "$ROOT/tools/make-dmg-background.py" "$ROOT/assets" >/dev/null
+
+# Both resolutions in one file, which is how a background is told that it has
+# a Retina half.
+tiffutil -cathidpicheck "$ROOT/assets/dmg-background.png" "$ROOT/assets/dmg-background@2x.png" \
+    -out "$ROOT/assets/dmg-background.tiff" >/dev/null 2>&1
+
+mkdir -p "$STAGE/.background"
+cp "$ROOT/assets/dmg-background.tiff" "$STAGE/.background/background.tiff"
+
+# ---------------------------------------------------------------- the image
+#
+# Built writable first. Icon positions and the window's appearance live in the
+# volume's own .DS_Store, and there is no way to write one except by arranging
+# the window and letting Finder save it. Compressed and made read-only after.
 
 say "Building $DMG"
-hdiutil create \
-    -volname "$APP_NAME" \
-    -srcfolder "$STAGE" \
-    -fs HFS+ \
-    -format UDZO \
-    -ov \
-    "$DMG" >/dev/null
+
+RW="$OUT_DIR/.rw.dmg"
+rm -f "$RW"
+
+hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov "$RW" >/dev/null
+
+MOUNT="$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | grep -o '/Volumes/.*')"
+sleep 2
+
+# The positions here and the marks on the backdrop have to agree; both come
+# from the constants at the top of make-dmg-background.py.
+osascript <<APPLESCRIPT
+tell application "Finder"
+    tell disk "$APP_NAME"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {180, 120, 860, 628}
+
+        set opts to the icon view options of container window
+        set arrangement of opts to not arranged
+        set icon size of opts to 96
+        set text size of opts to 12
+        set background picture of opts to file ".background:background.tiff"
+
+        set position of item "$APP_NAME.app" of container window to {180, 225}
+        set position of item "Applications" of container window to {500, 225}
+        set position of item "INSTALL.txt" of container window to {598, 372}
+
+        -- Out of the window entirely. It has to be on the volume, because it
+        -- holds the picture behind all of this, but a Finder set to reveal
+        -- hidden files would otherwise show it as a stray folder in the middle
+        -- of the instructions.
+        try
+            set position of item ".background" of container window to {1200, 1200}
+        end try
+
+        update without registering applications
+        delay 2
+        close
+    end tell
+end tell
+APPLESCRIPT
+
+# The volume's own bookkeeping, which is of no interest to anyone opening the
+# image and shows up as stray folders for anyone whose Finder reveals hidden
+# files.
+rm -rf "$MOUNT/.fseventsd" "$MOUNT/.Trashes" "$MOUNT/.TemporaryItems" 2>/dev/null || true
+
+sync
+hdiutil detach "$MOUNT" >/dev/null 2>&1 || hdiutil detach "$MOUNT" -force >/dev/null 2>&1
+sleep 1
+
+rm -f "$DMG"
+hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+rm -f "$RW"
 
 rm -rf "$STAGE"
 
