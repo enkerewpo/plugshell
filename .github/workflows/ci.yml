@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Format and licence
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: brew install clang-format
+      - run: make format-check
+      - run: make license-check
+
+  build:
+    name: Build (macOS arm64)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build tools
+        run: brew install cmake ninja
+      - name: Build
+        run: make build
+      # The spike is deliberately not run in CI: it loads third-party plugins,
+      # which are not installed on a runner and can crash the host process.
+      # See docs/SPIKE.md finding F1.

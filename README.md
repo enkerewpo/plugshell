@@ -1,0 +1,188 @@
+# vstshell
+
+An agent-operable host for audio plugins.
+
+`vstshell` loads VST3 and Audio Unit plugins, exposes their parameters and presets over a machine-readable protocol, and — the part that does not exist today — lets a program **see** the plugin's editor and **operate the controls that are not exposed as parameters**, the way a human would.
+
+It runs two ways: as a standalone macOS application for studying a plugin on its own, and as a plugin itself, so the same interface is available inside a DAW with real signal flowing through it.
+
+> **Status: design stage.** Nothing is implemented yet. This document states the problem, surveys what already exists, and describes the intended design. The first milestone is a feasibility spike (see [Roadmap](#roadmap)), because two of the mechanisms this project depends on are not guaranteed to work and should be tested before anything is built on top of them.
+
+---
+
+## Motivation
+
+Two things are hard to do with an audio plugin today.
+
+**The first is automation beyond the parameter list.** A plugin publishes a set of automatable parameters, and every host can read and write those. But a plugin's editor routinely contains controls that are not in that list: wavetable selection, modulation routings drawn by dragging one control onto another, preset browsers, matrix cells, oscilloscope zoom, anything the developer chose not to expose. If a control is not a parameter, no host can touch it, and any workflow that needs it stops being programmable.
+
+**The second is that a program cannot see the plugin.** Parameter values are numbers without context. Knowing that `osc1_wt_pos = 0.42` says nothing about what the wavetable looks like at that position, whether the filter curve on screen is doing what you intended, or what the modulation matrix currently routes where. The information a person uses to work with a plugin is mostly visual, and none of it is available programmatically.
+
+These two gaps have the same consequence: an automated agent — a language model with tool access, a test harness, a batch analysis script — can adjust the numbers a plugin chooses to publish, and is blind and powerless for everything else.
+
+`vstshell` closes both gaps. It gives a calling program the plugin's parameters, its presets, a rendered image of its editor, and the ability to click and drag inside that editor. What a person can do with a plugin, a program can do.
+
+### What this makes possible
+
+- **Assisted sound design.** An agent can open a synth, look at the editor, change a control, listen to the result, and iterate — including controls that are not parameters.
+- **Plugin study and documentation.** Enumerate a plugin's factory banks, load each preset, capture the editor, and build a searchable catalogue of what a library actually contains.
+- **Regression testing for plugin developers.** Drive the editor, capture it, and diff the image across builds.
+- **Reproducible experiments.** Describe a patch as a sequence of operations rather than an opaque binary state blob.
+- **Accessibility.** Custom-drawn plugin editors are invisible to screen readers. A structured description of the editor is a starting point for changing that.
+
+---
+
+## Related work
+
+Plugin hosting is well-trodden. Programmatic hosting is less so. Agent-facing hosting with editor access does not appear to exist.
+
+| Project | Loads VST3/AU | Parameters | Presets | Opens editor | Screenshot | Synthetic input | Agent protocol |
+|---|---|---|---|---|---|---|---|
+| [pedalboard](https://spotify.github.io/pedalboard/) (Spotify) | yes | yes | no | no | no | no | no |
+| [DawDreamer](http://dirt.design/DawDreamer/) | yes | yes | `.fxp`, `.vstpreset` | yes, **blocking** | no | no | no |
+| [Carla](https://github.com/falkTX/Carla) | yes | yes | yes | yes | no | no | no |
+| [VCV Host](https://vcvrack.com/Host) | yes | yes | — | yes | no | no | no |
+| [ableton-mcp-extended](https://github.com/uisato/ableton-mcp-extended) | via Live API | yes | — | no | no | no | yes (MCP) |
+| **vstshell** | yes | yes | yes, incl. factory banks | yes, **non-blocking** | yes | yes | yes (MCP) |
+
+**DawDreamer is the closest prior work** and the most useful reference. It has a complete parameter API, loads `.fxp` and `.vstpreset` files, saves and restores plugin state, and can open a plugin's editor. Its editor call is documented as blocking — it "will pause Python execution until you close the editor window" — because it is designed for a human to make an adjustment mid-script. That is the right design for its purpose and the wrong one for an automated caller, which needs the window open, observable, and driveable while it keeps working.
+
+**pedalboard** is excellent for its actual purpose, audio processing in Python, and deliberately has no editor support.
+
+**ableton-mcp-extended** shows the agent-protocol half of this problem being solved through a DAW's own scripting API. That approach inherits whatever the DAW exposes, which does not include the inside of a plugin's editor.
+
+### Adjacent work worth knowing
+
+- **DAW scripting APIs** (Reaper ReaScript, Bitwig's Controller API, the Live Object Model) reach devices and parameters, never editor internals.
+- **GUI automation frameworks** (Appium, Playwright, macOS Accessibility) assume an accessibility tree. Audio plugin editors are typically custom-drawn — often through OpenGL or Metal — and expose no such tree, which is why generic tools do not work here and why this project has to solve image capture and event injection directly.
+- **Plugin analysis tools** such as Plugin Doctor measure a plugin's transfer characteristics as a black box. Complementary to this work, not overlapping.
+
+### The contribution
+
+Stated plainly: parameter-level plugin hosting is solved. This project adds the editor — capture it, operate it, and put both behind a protocol an agent can call — and packages the result so it works standalone and inside a DAW.
+
+---
+
+## Design
+
+### Components
+
+```
+  Agent  (Claude Code, Codex, a test script, anything)
+    |
+    |  MCP over stdio
+    v
+  vstshell-mcp        thin protocol adapter
+    |
+    |  JSON-RPC over local WebSocket
+    v
+  vstshell-core       C++ / JUCE
+    |
+    +-- plugin loading         AudioPluginFormatManager (VST3 + AU)
+    +-- parameters            AudioProcessorParameter
+    +-- presets               VST3 and AU preset APIs, factory banks
+    +-- editor surface        capture and event injection
+    +-- audio                 offline render and realtime device I/O
+```
+
+`vstshell-core` builds into three products from one codebase:
+
+| Product | Use |
+|---|---|
+| `VSTShell.app` | Standalone. Study a plugin with no DAW running. |
+| `VSTShell.vst3` | Loaded in a DAW, hosts a child plugin, same protocol. |
+| `VSTShell.component` | Audio Unit build of the same. |
+
+The separate RPC layer exists because of the in-DAW product: a plugin cannot spawn its own agent process, so the agent connects inward. Using the same transport for the standalone app means a caller sees one interface in both modes.
+
+### Why C++ and JUCE
+
+The VST3 SDK is C++, and JUCE is the only mature framework that hosts both VST3 and Audio Units, manages editor windows, and builds application and plugin targets from shared source. Writing the core in C++ also keeps the path to deeper DAW integration open. Higher-level languages would mean a binding layer for exactly the operations that need to be closest to the platform: window capture and event dispatch.
+
+### The two mechanisms that must be proven first
+
+Everything else here is ordinary engineering. These two are not, and the project's feasibility rests on them.
+
+**Editor capture.** A plugin's editor is drawn by the plugin into a host-provided view. Plugins that render through OpenGL or Metal do not necessarily yield their contents to view-level snapshot APIs, which read the view's backing store. Candidate approaches, in order of preference: JUCE's `createSnapshotOfNativeWindow`; `NSView` caching APIs; `ScreenCaptureKit`, which is reliable but requires the Screen Recording permission and a window that is actually on screen.
+
+**Event injection.** Synthesising a mouse event and delivering it to the editor's view is straightforward to attempt and not guaranteed to land. A plugin may run its own event handling, hit-test against GPU state, or ignore events whose provenance it does not recognise. Candidates: synthetic `NSEvent` posted to the view; `CGEvent` at the session level, which is more likely to work and less precise; the plugin framework's own event entry points where they can be identified.
+
+Both are per-plugin behaviours, not per-platform ones. The spike therefore tests against three plugins chosen for different rendering strategies rather than trying to reason about it in the abstract.
+
+### Interface sketch
+
+Provisional, expected to change once the spike reports back.
+
+```
+load_plugin(path)                      -> plugin_id, format, io layout
+list_parameters(plugin_id)             -> name, index, value, text, range
+set_parameter(plugin_id, index, value)
+list_presets(plugin_id)                -> factory banks and programs
+load_preset(plugin_id, ref)
+open_editor(plugin_id)                 -> non-blocking; size
+screenshot(plugin_id)                  -> PNG
+click(plugin_id, x, y, button)
+drag(plugin_id, from, to, button)
+key(plugin_id, keycode, modifiers)
+render(plugin_id, midi, seconds)       -> audio buffer
+get_state / set_state
+```
+
+Coordinates are editor-local, so a caller works from what the screenshot shows.
+
+---
+
+## Roadmap
+
+| Phase | Work | Exit condition |
+|---|---|---|
+| 0 | CMake, JUCE, VST3 SDK, build skeleton | Builds on macOS arm64 |
+| **1** | **Feasibility spike** | Capture and input verified, or refuted, against three plugins |
+
+Phase 1 has already produced one finding that changes the design: scanning installed plugins in-process crashes the host, because it loads arbitrary third-party binaries into a single address space. See [docs/SPIKE.md](docs/SPIKE.md), finding F1. Whether plugin *instances* must also be hosted out of process — and whether editor capture and input survive a process boundary — is now an open design question rather than an assumption.
+| 2 | Core: loading, parameters, presets, state | Usable from a CLI |
+| 3 | RPC and MCP adapter | An agent completes a real sound-design task |
+| 4 | Packaging | Signed `.app` |
+| 5 | Plugin builds | Works inside a DAW on live signal |
+
+Phase 1 is deliberately placed before anything is built on top. Its output is a report on whether editor capture and event injection work, per plugin, with whatever fallbacks were needed. If neither mechanism can be made to work, that finding is worth publishing on its own and the project stops there rather than after phase 4.
+
+### Spike targets
+
+Chosen for different rendering strategies, not for popularity:
+
+- **Arturia Pigments** — multi-engine synth, visually rich, likely GPU-rendered
+- **Xfer Serum 2** — wavetable synth with a custom renderer
+- **FabFilter Pro-Q 4** — interactive curve display, unusual interaction model
+
+---
+
+## Platform support
+
+macOS first, on Apple Silicon. The core is written to stay portable: JUCE handles VST3 on Windows and Linux, and capture and event injection are isolated behind a platform interface precisely because they are the parts that will need reimplementing. Audio Units are macOS-only by definition.
+
+---
+
+## License
+
+**GPL-3.0.** This is not a preference. JUCE and the Steinberg VST3 SDK are both dual-licensed as GPLv3 or commercial, so a project that links against them and is distributed publicly is GPLv3. Contributions are accepted on that basis.
+
+VST is a trademark of Steinberg Media Technologies GmbH. This project is not affiliated with or endorsed by Steinberg, Spotify, Arturia, Xfer Records, or FabFilter.
+
+---
+
+## Documentation
+
+- [docs/BUILD.md](docs/BUILD.md) — requirements, targets, repository layout
+- [docs/SPIKE.md](docs/SPIKE.md) — phase-1 plan and findings
+- [CONTRIBUTING.md](CONTRIBUTING.md) — what is useful right now
+
+## Contributing
+
+The project is at design stage, so the most useful contributions right now are:
+
+- Evidence about editor capture or event injection on specific plugins, especially negative results
+- Prior art that this survey missed
+- Design critique, particularly of the RPC boundary and the in-DAW product
+
+Open an issue before writing code, so effort does not land on a phase that the spike may invalidate.

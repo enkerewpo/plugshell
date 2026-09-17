@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 110
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AllowShortFunctionsOnASingleLine: Inline
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Allman
+NamespaceIndentation: None
+PointerAlignment: Left
+SortIncludes: CaseSensitive
+SpaceAfterCStyleCast: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"vstshell/'
+    Priority: 1
+  - Regex: '^<juce'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
+---
+Language: ObjC
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 110
+BreakBeforeBraces: Allman
+PointerAlignment: Left
+ObjCBlockIndentWidth: 4
+ObjCSpaceAfterProperty: true
+ObjCSpaceBeforeProtocolList: true
+...
