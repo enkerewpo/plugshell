@@ -18,6 +18,38 @@ if(APPLE)
     target_link_libraries(plugshell_app PRIVATE "-framework Cocoa" "-framework CoreGraphics" "-framework ScreenCaptureKit")
 endif()
 
+# The out-of-process helper travels inside the application bundle, in the
+# place macOS expects a helper with a user interface to be. It has to be there
+# before the bundle is signed, and it has to be signed itself first: a nested
+# bundle signed after its container invalidates the container's signature, and
+# an invalid signature is a permission grant lost.
+add_dependencies(plugshell_app plugshell_child)
+
+# The out-of-process helper travels inside the application bundle, in the
+# place macOS expects a helper with a user interface to be. It has to be there
+# before the bundle is signed, and it has to be signed itself first: a nested
+# bundle signed after its container invalidates the container's signature, and
+# an invalid signature is a permission grant lost.
+#
+# A target of its own rather than a POST_BUILD on the application, because a
+# POST_BUILD only runs when the application itself is relinked. A build that
+# changed the helper and nothing else left the application's inputs untouched,
+# so the copy never ran and the bundle went on carrying the previous helper --
+# which is the worst shape a build bug can take: everything succeeds and the
+# thing you just changed is not the thing that runs.
+add_custom_target(plugshell_package ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_BUNDLE_DIR:plugshell_app>/Contents/Helpers"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf
+            "$<TARGET_BUNDLE_DIR:plugshell_app>/Contents/Helpers/plugshell-host.app"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "$<TARGET_BUNDLE_DIR:plugshell_child>"
+            "$<TARGET_BUNDLE_DIR:plugshell_app>/Contents/Helpers/plugshell-host.app"
+    COMMENT "Placing the out-of-process helper inside the bundle"
+    VERBATIM)
+
+add_dependencies(plugshell_package plugshell_app plugshell_child)
+
 target_compile_definitions(plugshell_app PRIVATE
     PLUGSHELL_VERSION="${PROJECT_VERSION}"
     JUCE_PLUGINHOST_VST3=1
@@ -64,7 +96,10 @@ if(APPLE)
 
     if(NOT PLUGSHELL_CODESIGN_IDENTITY STREQUAL "-")
         add_custom_command(
-            TARGET plugshell_app POST_BUILD
+            TARGET plugshell_package POST_BUILD
+            COMMAND codesign --force --sign "${PLUGSHELL_CODESIGN_IDENTITY}"
+                    --identifier "ai.plugshell.host"
+                    "$<TARGET_BUNDLE_DIR:plugshell_app>/Contents/Helpers/plugshell-host.app"
             COMMAND codesign --force --sign "${PLUGSHELL_CODESIGN_IDENTITY}"
                     --identifier "ai.plugshell.app"
                     "$<TARGET_BUNDLE_DIR:plugshell_app>"

@@ -28,7 +28,11 @@ endif()
 add_subdirectory(external/JUCE)
 
 add_subdirectory(src)
+add_subdirectory(src/child)
 add_subdirectory(src/app)
+
+enable_testing()
+add_subdirectory(tests)
 
 if(PLUGSHELL_BUILD_SPIKE)
     add_subdirectory(spike)

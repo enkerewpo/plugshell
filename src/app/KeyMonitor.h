@@ -20,6 +20,29 @@ namespace plugshell
     Watching at the platform's event layer removes focus from the question.
     Events are still passed through untouched unless the caller says it wants
     them, so the plugin keeps every key while the mode is off.
+
+    Focus is not the only thing that intercepts a key, and the other one is not
+    worked around here. An input method sits between the keyboard and the
+    application, and a Chinese one takes `[`, `]`, `-`, `=` and Escape for
+    itself -- they never reach this at all, measurably: with Pinyin active `q`
+    arrives and `[` does not, ever.
+
+    Reaching below that means a session-wide CGEventTap, which does work: with
+    one in place those keys arrived and mapped correctly. It was reverted all
+    the same. A tap at that level is in the path of every keystroke on the
+    machine, and this one looked up the keyboard layout twice per event inside
+    a callback the system gives a deadline to -- the result was that typing
+    got worse everywhere, not better here. Being unable to play three notes is
+    a smaller problem than being unable to type.
+
+    The notes those keys carried have since been dropped from the layout
+    instead, so the instrument no longer depends on a key an input method
+    wants. What is still lost is Escape closing a panel, which is why Cmd-W
+    does the same thing.
+
+    If the tap is ever picked up again it needs two things this attempt did
+    not have: installed only while the keyboard instrument is switched on, and
+    the layout looked up once and cached rather than per keystroke.
 */
 class KeyMonitor
 {

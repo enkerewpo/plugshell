@@ -6,7 +6,7 @@ BUILD_TYPE ?= RelWithDebInfo
 GENERATOR ?= Ninja
 JOBS ?= $(shell sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 
-SOURCES := $(shell find src spike -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \) 2>/dev/null)
+SOURCES := $(shell find src spike tests -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \) 2>/dev/null)
 
 .DEFAULT_GOAL := help
 
@@ -30,6 +30,10 @@ build: configure ## Build everything
 .PHONY: spike
 spike: build ## Build and run the phase-1 feasibility spike
 	$(BUILD_DIR)/spike/plugshell_spike
+
+.PHONY: test
+test: build ## Run the test suite
+	ctest --test-dir $(BUILD_DIR) --output-on-failure
 
 .PHONY: format
 format: ## Rewrite sources with clang-format

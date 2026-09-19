@@ -64,8 +64,8 @@ public:
 
     /** @param prepareAgain  restores the plugin to this rate and block size
                              afterwards, which is what the live device needs. */
-    static Result run(juce::AudioPluginInstance& plugin, const juce::File& destination,
-                      const Options& options, double restoreSampleRate, int restoreBlockSize)
+    static Result run(juce::AudioProcessor& plugin, const juce::File& destination, const Options& options,
+                      double restoreSampleRate, int restoreBlockSize)
     {
         Result result;
 

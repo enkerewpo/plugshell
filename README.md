@@ -108,6 +108,13 @@ position. Without one, tempo-synchronised delays, arpeggiators and LFOs have
 no reference; many plugins assume 120 BPM and produce output that is wrong
 without reporting an error.
 
+**Universal presets.** A session is recorded as the operations it consisted
+of — parameter changes by name, and pointer operations for the controls a
+plugin does not publish — and replayed against a fresh instance, bound to the
+plugin it was recorded against and verified as it goes. The file is readable
+and diffable, and it carries no vendor bytes:
+[docs/UNIVERSAL_PRESET.md](docs/UNIVERSAL_PRESET.md).
+
 ---
 
 ## Agent control
@@ -257,11 +264,9 @@ See [docs/BUILD.md](docs/BUILD.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
    its fate, and a segmentation fault cannot be caught as an exception. This
    has occurred here with a released commercial plugin, on the audio thread.
    Design: [docs/OUT_OF_PROCESS.md](docs/OUT_OF_PROCESS.md).
-2. **Universal preset.** Recording and replaying operation sequences, bound to
-   a plugin version and verified during replay.
-3. **Preset index.** Render every preset in a library, embed the results, and
+2. **Preset index.** Render every preset in a library, embed the results, and
    answer nearest-neighbour queries against a target sound.
-4. **Interface understanding.** Reading an editor well enough to identify its
+3. **Interface understanding.** Reading an editor well enough to identify its
    controls, so an agent can operate a plugin it has no prior description of.
 
 ---

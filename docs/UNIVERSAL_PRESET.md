@@ -160,6 +160,77 @@ reading the value back. Pointer operations are the escape hatch for everything
 the plugin did not publish, and they are inherently more fragile. A recorder
 should reach for a parameter first and a coordinate only when it must.
 
+### What a parameter list does not reach, and what an operation sequence does
+
+Measured, on Serum: a factory preset differs from a freshly instantiated
+instance in **64 of its 2397 parameters**, all of them automatable, and
+replaying those 64 does not reproduce the preset. The oscillator's wavetable
+is what is missing, and Serum does not publish it as a parameter at all — the
+editor shows `Dist 8bit Fwap` where the replayed parameters show `Default`.
+
+That is a real limit, and it is a limit on **one way of authoring a patch**,
+not on the format. There are two:
+
+- **Diffing against the initial state.** Ask the plugin where it ended up and
+  write down how that differs from how it started. Convenient, and it can only
+  ever contain parameters, because a difference between two parameter sets is
+  made of parameters. This is what failed above.
+
+- **Recording the session.** Write down the operations as they happen —
+  parameter changes and pointer operations alike. A wavetable chosen by
+  clicking through the plugin's own list is three clicks, and three clicks is
+  something a recording contains and a diff cannot.
+
+The second one reproduces what the first cannot. Recorded on Serum: three
+clicks on the OSC A wavetable arrow and one parameter change, replayed against
+a freshly loaded instance.
+
+| | recorded | replayed |
+|---|---|---|
+| OSC A wavetable | `Analog_BD_Sin` | `Analog_BD_Sin` |
+| peak | 0.232533 | 0.232524 |
+| RMS | 0.114287 | 0.114295 |
+| region checks | — | 0.0 away, three of three |
+
+So: **prefer a parameter where the control is one, and record the clicks where
+it is not.** The escape hatch is not a fallback for awkward plugins, it is
+half of what a patch is.
+
+### A path is not a destination
+
+Three clicks reproduced the wavetable, and three clicks is still the wrong
+thing to write down. It is a fact about the list as it stood on the day: start
+from a different wavetable, or let the vendor add one to the folder, and three
+clicks arrive somewhere else with nothing in the file to notice. A preset does
+not contain how you got there, and neither should this.
+
+What a patch can record instead is what the region it was watching ended up
+looking like, and a budget. Replay then repeats the gesture until it arrives:
+
+| starting from | steps taken | how far off | result |
+|---|---|---|---|
+| the initial state | 3 of 16 | 0.0 | reproduced |
+| one entry further on | 2 of 16 | 0.0 | reproduced |
+| eight entries past it | 16 of 16 | 46.7 | reported as not found |
+| twenty entries past it | 16 of 16 | 29.7 | reported as not found |
+
+Different distances, same destination — and a failure that says so rather than
+clicking a fixed number of times and stopping wherever that lands.
+
+Two measurements were needed to make the comparison worth anything, and both
+were wrong at first in the same direction: too coarse to tell two labels
+apart, while looking like they worked.
+
+- An eight by eight grid is enough to see a highlight move across a tab strip
+  and not enough to read a word. Sixteen by sixteen is.
+- The average difference over the whole grid gets *less* useful as the grid
+  gets finer, because what separates two words is a strong difference in the
+  few cells the letters fall in, and averaging over two hundred and fifty-six
+  cells divides it away. The average over the worst tenth keeps it.
+
+Until both were fixed the search stopped on the wrong name and reported
+success, and only the sound check noticed.
+
 ### Verification is what makes replay trustworthy
 
 After each operation the host can compare the parameter set against what the
@@ -170,3 +241,48 @@ changed, the recorded editor image is the fallback comparison.
 
 This is the difference between a patch format and a macro recorder: a macro
 replays blindly, and this can tell you it went wrong.
+
+### And a picture of what did not move
+
+A pointer operation that moves a parameter is checked by reading that
+parameter back. One that moves none — a tab, a page, a name chosen from the
+plugin's own list — leaves nothing to read, and those were exactly the
+operations a patch had to take on trust.
+
+So an operation also records a rectangle of the editor and how it looked: the
+region reduced to an eight by eight grid of brightnesses, compared on replay
+by how far apart the two are on average. Coarse on purpose. An exact hash of a
+region of a live editor fails for reasons that have nothing to do with the
+operation, because plugin interfaces animate.
+
+Two things were learned building it, both of which had made the check useless
+while looking like it worked:
+
+**A bit per cell is not enough.** Reducing each cell to "lighter or darker
+than this region's average" is thrown by nothing smaller than half the picture
+changing, and the first thing this was asked to notice — a tab strip where the
+highlight moved one tab across — did not move a single bit. Keeping the
+brightness costs sixty-four bytes and can see a highlight.
+
+**Synthetic input is posted, not delivered.** Replay ran every operation
+inside one call, so each click was still sitting in the application's event
+queue when the next one was posted and when the result was checked. Every
+comparison was against the editor as it had been before anything happened to
+it, and every patch reported that it had reproduced. Replay now drains the
+queue after each operation and waits for the redraw, which is what recording
+had been doing all along without anyone noticing it mattered.
+
+With both fixed: an operation that landed comes back 0.0 away, and the same
+operation with its coordinate moved into dead space comes back 3.4 away.
+
+### And a measurement of the sound itself
+
+Everything above verifies the operations. None of it catches a patch where
+every operation applied, every value read back correctly, and the plugin plays
+something else — which is exactly what happens when the part of the voice that
+matters is not in the parameter list.
+
+So a patch carries a fingerprint of its own sound: one note rendered offline,
+reduced to a peak and an RMS. Replay renders the same note and reports whether
+it matched. It is deliberately coarse, because the failure it is for is not a
+subtle drift but a saw where a wavetable should be.

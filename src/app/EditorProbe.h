@@ -5,6 +5,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cstdint>
+
 namespace plugshell
 {
 
@@ -67,6 +69,13 @@ public:
         it while the pair behaves normally against everything else. */
     static void attachAsChildWindow(juce::Component& child, juce::Component& parent);
 
+    /** The window server's number for the window `c` is in, or 0.
+
+        This is the one identifier for a window that means the same thing in
+        another process, which is what makes it the only way to say "put your
+        window directly above that one" across a process boundary. */
+    static std::uint32_t windowNumberOf(juce::Component& c);
+
     /** Whether Screen Recording has already been granted. Does not prompt. */
     static bool hasScreenRecordingPermission();
 
@@ -96,9 +105,14 @@ public:
     };
 
     /** Whether to inject events at the system level rather than into this
-        application's own event queue. See the note in the implementation:
-        the application queue is the better-behaved of the two and is not
-        always enough. */
+        application's own event queue.
+
+        Off by default. A system event moves the user's real cursor and is
+        delivered to whichever window is in front, so with the host in the
+        background it lands in somebody else's application -- which is not a
+        thing an agent-driven host may do while a person is using the machine.
+        The application queue has neither problem and reaches most editors;
+        see the note in the implementation for the ones it does not. */
     static bool useSystemEvents;
 
     /** Posts a synthetic mouse event at a point given in `component`'s own
@@ -113,6 +127,24 @@ public:
         deliver. Going through the queue lets such a loop find its events. */
     static void mouse(juce::Component& component, MouseAction action, juce::Point<float> pointInComponent,
                       float scrollDelta = 0.0f, juce::ModifierKeys mods = {});
+
+    /** Runs the application's event queue until it is empty or @p timeoutMs
+        has passed, and returns having done so.
+
+        Synthetic input is posted, not delivered. That distinction costs
+        nothing while a session is being recorded -- the message loop is
+        running anyway, and the click arrives a few milliseconds later -- and
+        it invalidates everything about replay, where the operations run one
+        after another inside a single call and every click is still sitting in
+        the queue when the next one is posted and when the result is checked.
+        Replaying a patch without this compared the editor against itself
+        before anything had happened to it, and reported that the patch had
+        reproduced.
+
+        This is a bounded pump rather than a modal loop: it delivers what is
+        waiting and returns, so nothing re-enters the caller except the events
+        the caller just created. */
+    static void settle(int timeoutMs = 120);
 
     /** A press, a straight-line move, and a release, with enough intermediate
         points that a control tracking the drag sees a movement rather than a

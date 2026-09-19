@@ -19,8 +19,8 @@ namespace plugshell
 
     The layout is two octaves stacked, as trackers and Cubase lay them out:
 
-        upper octave   black  2 3   5 6 7   9 0   =
-                       white  q w e r t y u i o p [ ]
+        upper octave   black  2 3   5 6 7   9 0
+                       white  q w e r t y u i o p
 
         lower octave   black  s d   g h j   l ;
                        white  z x c v b n m , .
@@ -28,6 +28,19 @@ namespace plugshell
     Each pair of rows is a piano: the lower row is the white keys and the row
     above holds the black keys in the gaps where a piano has them, which is why
     there is no key above `c`-`v` or `m`-`,`.
+
+    The upper octave stops at `p` rather than running on to `[`, `]` and `=`.
+    Those three are not keys this can have: a Chinese or Japanese input method
+    takes them for paging through its candidates, and it takes them before any
+    application is offered them at all -- measurably, with a monitor that saw
+    `q` arrive and never saw `[`. Reaching below the input method means an
+    event tap sitting in the path of every keystroke on the machine, which was
+    tried and made typing worse everywhere; see the note in KeyMonitor.h.
+
+    So they are gone rather than dead. A key drawn on the map that does
+    nothing for half the people who try it is worse than a shorter keyboard,
+    and `=` goes with them because it is the black key between the two white
+    ones being removed -- a sharp with nothing either side of it.
 */
 class QwertyKeys
 {
@@ -94,10 +107,6 @@ public:
             return 26;
         case 'p':
             return 28;
-        case '[':
-            return 29;
-        case ']':
-            return 31;
 
         // Upper octave, black keys.
         case '2':
@@ -114,8 +123,6 @@ public:
             return 25;
         case '0':
             return 27;
-        case '=':
-            return 30;
 
         default:
             return -1;

@@ -68,19 +68,59 @@ and be slow, because nothing on the audio thread waits for it.
 
 ## The awkward part: the editor
 
-An editor belongs to its instance, so it lives in the child process. Two ways
-to present that:
+An editor belongs to its instance, so it lives in the child process, and no
+public macOS interface lets a view cross a process boundary into another
+application's window.
 
-**A window of its own.** The child opens a normal window; the host positions it
-and keeps it above the main one. Costs nothing to build and is honest about
-what is happening — the plugin really is a separate program. This is phase one.
+### What one window would take, and why it is not what ships
 
-**Embedded in the host's window.** macOS can do it, through a remote layer
-hosted in the parent's view hierarchy. It looks seamless and it is the fiddliest
-code in the project. Phase two, once the rest works.
+The one mechanism that makes it literally one window is CoreAnimation's
+cross-process layer hosting: the child publishes its layer tree through a
+`CAContext` and hands over a context id, and the host puts a `CALayerHost`
+with that id in its own view hierarchy. This is what Safari and Chrome use to
+put a sandboxed process's pixels in an unsandboxed window. It was built and it
+does not work here.
 
-Starting with a separate window is not a compromise on the crash guarantee,
-which is the point of the exercise; it is a compromise on how the result looks.
+The measurement, because "it did not work" is not a finding: a `CALayerHost`
+renders nothing on this system **even when the context it is given was created
+in the same process**. The control was a plain green layer published by the
+host to itself and hosted three lines later; a sibling `CALayer` with a
+literal background colour, added to the same view, drew correctly. So it is
+not the cross-process half, not the layer's frame, and not the view's place in
+the hierarchy. The experiment is kept under the session scratchpad, and it is
+worth retrying on another macOS version before writing the approach off.
+
+The public-API alternative is an `IOSurface`: the child renders its layer tree
+into shared memory with `CARenderer` and the host sets that surface as a
+layer's `contents`. That is genuinely one window and needs no private
+interface. It costs a render loop in the child, and it does not solve input --
+a hosted surface is pixels either way, so events have to be forwarded and
+replayed on the other side.
+
+### What ships
+
+A second window, borderless and non-activating, held exactly over the area the
+host leaves empty, ordered directly above the host's window by window number.
+
+Two properties do the work. *Non-activating* means clicking a knob does not
+make the child the active application: the host watches the keyboard at the
+event layer so the computer keys can play the plugin, and a local event
+monitor only sees events sent to the active application. With an ordinary
+window, touching the plugin killed the computer keyboard until the user
+clicked the host's window again.
+
+*Ordered rather than floating* is the difference between the pair behaving
+like one window and not. Ownership cannot cross processes; ordering can,
+because a window number is a name the window server hands out and both
+processes can say it. Floating was the first attempt, and floating is a
+property of the whole screen -- so the panel had to be hidden whenever the
+host was not in front, and the plugin blinked out of existence every time the
+user looked at another window.
+
+What is left over, and is not fixable this way: it does not minimise with the
+host, and it is missing from a screenshot of the host's window. Both are
+consequences of it being a window, and both go away only with the layer or
+surface routes above.
 
 ---
 
@@ -122,8 +162,9 @@ back where it was.
 2. The child executable: load a plugin, process from the ring, answer the
    control channel.
 3. The host side: launch, monitor, mirror parameters, restart.
-4. The editor in its own window.
-5. The editor embedded.
+4. The editor, held over the host window's content area.
+5. One window for real, by IOSurface, with input forwarded to the child.
 
 Steps one to three are what deliver the guarantee. Four is what makes it
-usable. Five is what makes it invisible.
+usable. Five is what would make it indistinguishable, and is the only thing
+the in-process path still does better.

@@ -222,6 +222,14 @@ void EditorProbe::attachAsChildWindow(juce::Component& child, juce::Component& p
     [childWindow makeKeyAndOrderFront:nil];
 }
 
+std::uint32_t EditorProbe::windowNumberOf(juce::Component& c)
+{
+    NSView* view = hostViewFor(c);
+    NSWindow* window = view != nil ? [view window] : nil;
+
+    return window != nil ? (std::uint32_t)[window windowNumber] : 0;
+}
+
 bool EditorProbe::hasAccessibilityPermission() { return AXIsProcessTrusted(); }
 
 bool EditorProbe::requestAccessibilityPermission()
@@ -344,7 +352,52 @@ EditorProbe::CaptureResult EditorProbe::capture(juce::Component& component, cons
     return result;
 }
 
-bool EditorProbe::useSystemEvents = true;
+// Off by default, which is the opposite of what it was and the right way
+// round for the caller this host is built for.
+//
+// A system event is a real mouse: it moves the user's cursor, it goes to
+// whatever window happens to be in front rather than to the editor, and it
+// therefore lands in another application entirely whenever plugshell is not
+// frontmost. None of that is acceptable in a host whose whole point is being
+// driven by a program while a person is using the machine for something else.
+//
+// The application-queue path has neither problem and is enough for most
+// editors. It is not enough for all of them -- see the note in mouse() -- so
+// the caller can ask for the other one, knowing what it costs.
+bool EditorProbe::useSystemEvents = false;
+
+void EditorProbe::settle(int timeoutMs)
+{
+    const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32)juce::jmax(0, timeoutMs);
+
+    for (;;)
+    {
+        // Nil date, not a future one: take what is already queued and stop,
+        // rather than waiting for something that may never come.
+        NSEvent* event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                            untilDate:[NSDate distantPast]
+                                               inMode:NSDefaultRunLoopMode
+                                              dequeue:YES];
+
+        if (event == nil)
+        {
+            // Nothing waiting, but a view that was asked to redraw has not
+            // necessarily done it yet. One turn of the run loop gives it the
+            // chance, and the deadline stops this being a wait.
+            if (juce::Time::getMillisecondCounter() >= deadline)
+                return;
+
+            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                     beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+            continue;
+        }
+
+        [NSApp sendEvent:event];
+
+        if (juce::Time::getMillisecondCounter() >= deadline)
+            return;
+    }
+}
 
 void EditorProbe::mouse(juce::Component& component, MouseAction action, juce::Point<float> p,
                         float scrollDelta, juce::ModifierKeys mods)
